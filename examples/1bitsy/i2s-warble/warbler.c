@@ -3,7 +3,7 @@
 #include <math.h>
 
 #define Fs     44100.0          // sample rate: Hz
-#define IVL        0.25         // sec
+#define IVL        5.0         // sec
 #define NCYCLE    20            // cycles
 
 const uint32_t UP_SAMPLES = (uint32_t)(Fs * IVL + 0.5);
@@ -59,9 +59,12 @@ void warbler_trigger(warbler *wp, warbler_state s, float slew)
 
 int16_t warbler_next_sample(warbler *wp, float slew)
 {
-    int16_t samp = wp->w_phase * 32768 - 16384;
+    int16_t samp = wp->w_phase * 32767 - 16384;
     wp->w_phase += wp->w_dphase;
     wp->w_dphase *= wp->w_ddphase;
+
+    if (wp->w_phase >= 1.0)
+        wp->w_phase -= 1.0;
 
     switch (wp->w_state) {
 
