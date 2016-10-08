@@ -21,6 +21,7 @@ static void heartbeat(uint32_t msec_time)
 static void setup_heartbeat(void)
 {
     rcc_periph_clock_enable(LED_RCC_PORT);
+    gpio_mode_setup(LED_PORT, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, LED_PIN);
     register_systick_handler(heartbeat);
 }
 
@@ -32,7 +33,6 @@ static void setup(void)
 
     setup_heartbeat();
 
-    my_ILI.begin();
     my_ILI.begin();
 }
 
@@ -81,15 +81,20 @@ static void run()
 
     for (int ci = 0; ; ci = (ci + 1) % color_count) {
         uint16_t color = colors[ci];
+        color = ILI9341_YELLOW;
         fill_rect(left, top, left + width, top + height, color);
         my_ILI.writeRect(0, 0, 240, 320/2, buf[0]);
         my_ILI.writeRect(0, 320/2, 240, 320/2, buf[0]);
 
         // erase edges
         fill_rect(left, top, left + 1, top + height, ILI9341_BLACK);
-        fill_rect(left + width - 1, top, left + width, top + height, ILI9341_BLACK);
+        fill_rect(left + width - 1, top,
+                  left + width, top + height,
+                  ILI9341_BLACK);
         fill_rect(left, top, left + width, top + 1, ILI9341_BLACK);
-        fill_rect(left, top + height - 2, left + width, top + height, ILI9341_BLACK);
+        fill_rect(left, top + height - 2,
+                  left + width, top + height,
+                  ILI9341_BLACK);
         
         // delay_msec(20);
 
