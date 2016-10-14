@@ -1,0 +1,3 @@
+- Make an arrow.
+- Animate it.
+- Figure out how to change the screen rotation.
