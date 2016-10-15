@@ -27,7 +27,7 @@ SOURCES  := ILI9341.cpp aa_test.cpp glcdfont.c systick.c	\
 OBJS     := $(patsubst %.cpp, %.o, $(SOURCES:%.c=%.o))
 LDLIBS   := -lm
 
-LDSCRIPT := ../stm32f4-1bitsy.ld
+LDSCRIPT := stm32f4-1bitsy.ld
 
 include ../Makefile.include
 CPPFLAGS += -I.

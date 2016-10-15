@@ -842,7 +842,7 @@ namespace agg
 
         //--------------------------------------------------------------------
         template<class PixFmt>
-        bool attach(PixFmt& pixf, int x1, int y1, int x2, int y2)
+            bool attach(PixFmt& pixf, int x1, int y1, int x2, int y2)
         {
             rect_i r(x1, y1, x2, y2);
             if(r.clip(rect_i(0, 0, pixf.width()-1, pixf.height()-1)))

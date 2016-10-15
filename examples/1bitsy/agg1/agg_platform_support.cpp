@@ -9,15 +9,19 @@
 
 #include "ILI9341.h"
 
+#define WINDOW_WIDTH 240
+#define WINDOW_HEIGHT 320
+
 #define STATIC_BUFFER_WIDTH 240
 #define STATIC_BUFFER_HEIGHT (320/2)
 #define STATIC_BUFFER_PIX_BYTES 2
 
 ILI9341_t3 my_ILI(0, 0, 0, 0, 0, 0);
 
-static unsigned char static_buffer[STATIC_BUFFER_WIDTH *
-                                   STATIC_BUFFER_HEIGHT *
-                                   STATIC_BUFFER_PIX_BYTES];
+// static unsigned char static_buffer[STATIC_BUFFER_WIDTH *
+//                                    STATIC_BUFFER_HEIGHT *
+//                                    STATIC_BUFFER_PIX_BYTES];
+static unsigned char *static_buffer = (unsigned char *)0x20000000;
 
 namespace agg {
 
@@ -49,7 +53,7 @@ namespace agg {
     bool
     platform_support::init(unsigned width, unsigned height, unsigned flags)
     {
-        assert(width == STATIC_BUFFER_WIDTH);
+        assert(width == WINDOW_WIDTH);
         assert(height == STATIC_BUFFER_HEIGHT);
         assert(flags == 0);
         m_rbuf_window.attach(static_buffer,
@@ -57,6 +61,7 @@ namespace agg {
                              STATIC_BUFFER_HEIGHT,
                              STATIC_BUFFER_WIDTH * STATIC_BUFFER_PIX_BYTES);
         my_ILI.begin();
+        my_ILI.setRotation(3);
         return true;
     }
 
@@ -67,7 +72,7 @@ namespace agg {
             my_ILI.writeRect(0, 0,
                              STATIC_BUFFER_WIDTH, STATIC_BUFFER_HEIGHT,
                              (const uint16_t *)static_buffer);
-            my_ILI.writeRect(0, 320/2,
+            my_ILI.writeRect(0, 240/2,
                              STATIC_BUFFER_WIDTH, STATIC_BUFFER_HEIGHT,
                              (const uint16_t *)static_buffer);
             if (!m_wait_mode)
@@ -137,7 +142,7 @@ extern "C" void abort()
 
 extern "C" void *_sbrk(int incr)
 {
-#define USE_CCM                 // stm32 core-coupled memory
+#undef USE_CCM                 // stm32 core-coupled memory
 #ifdef USE_CCM
     static uintptr_t ptr = 0x10000000;
     static const uintptr_t top_of_RAM = 0x10010000;
