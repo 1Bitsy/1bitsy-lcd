@@ -14,10 +14,10 @@ void abort(void)
     gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO8);
     while (true) {
         gpio_set(GPIOA, GPIO8);
-        for (int i = 0; i < 100000; i++)
+        for (int i = 0; i < 1000000; i++)
             __asm volatile ("nop");
         gpio_clear(GPIOA, GPIO8);
-        for (int i = 0; i < 100000; i++)
+        for (int i = 0; i < 1000000; i++)
             __asm volatile ("nop");
     }
 }

@@ -28,5 +28,5 @@ LDSCRIPT := stm32f4-1bitsy.ld
 include ../Makefile.include
 CPPFLAGS += -I.
 CFLAGS   += -O0 -Werror
-CXXFLAGS += -Wno-effc++
+CXXFLAGS += -O0 -Wno-effc++
 LD       := $(CXX)
