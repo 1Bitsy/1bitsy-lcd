@@ -2,7 +2,6 @@
 #define BG_DEBUG
 #undef CLEAR_DMA
 #define VIDEO_DMA
-#undef VIDEO_FAKE
 
 // C/POSIX headers
 #include <assert.h>
@@ -348,7 +347,6 @@ static void bang16(uint16_t data, bool done)
 
 static void start_video_dma(tile *tp)
 {
-#ifndef VIDEO_FAKE
     // Configure DMA.
     {
         DMA2_S1CR &= ~DMA_SxCR_EN;
@@ -446,7 +444,6 @@ static void start_video_dma(tile *tp)
         // TIM8_DCR    = 0;
         // TIM8_DMAR   = 0;
     }
-#endif /* VIDEO_FAKE */
 
     // Bit-bang the ILI9341 RAM address range.
     bang8(ILI9341_CASET, true, false);
@@ -460,23 +457,12 @@ static void start_video_dma(tile *tp)
     // Bit-bang the command word.
     bang8(ILI9341_RAMWR, true, false);
 
-#ifdef VIDEO_FAKE
-    const uint16_t *p = tp->pixels[0];
-    for (size_t i = tp->height * TILE_WIDTH; i--; ) {
-        // Little-endian order here.
-        bang8(*p & 0xFF, false, false);
-        bang8(*p++ >> 8, false, i == 0);
-    }
-    video_dma_busy = false;
-    clear_tile(tp);
-#else
     // Switch the LCD_WRX pin to timer control.
     gpio_set_af(LCD_WRX_PORT, GPIO_AF3, LCD_WRX_PIN);
     gpio_mode_setup(LCD_WRX_PORT, GPIO_MODE_AF, GPIO_PUPD_PULLUP, LCD_WRX_PIN);
 
     // Start the timer.
     TIM8_CR1 |= TIM_CR1_CEN;
-#endif
 }
 
 void dma2_stream1_isr(void)
