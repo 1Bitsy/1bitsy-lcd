@@ -1,16 +1,22 @@
 // Feature switches
 #define BG_DEBUG
+#undef CLEAR_DMA
+#define VIDEO_DMA
+#undef VIDEO_FAKE
 
+// C/POSIX headers
 #include <assert.h>
 #include <string.h>
 
+// libopencm3 headers
 #include <libopencm3/cm3/nvic.h>
+#include <libopencm3/stm32/dbgmcu.h>
 #include <libopencm3/stm32/dma.h>
 #include <libopencm3/stm32/gpio.h>
-
 #include <libopencm3/stm32/rcc.h>
+#include <libopencm3/stm32/timer.h>
 
-#include "ILI9341.h"
+// application headers
 #include "intr.h"
 #include "systick.h"
 
@@ -72,8 +78,6 @@ struct tile {
 
 static inline size_t tile_size_bytes(tile *tp)
 {
-    assert(sizeof *tp->pixels == 480); // XXX
-    assert(false);
     return tp->height * sizeof *tp->pixels;
 }
 
@@ -89,74 +93,19 @@ typedef enum pixbuf_state {
 struct pixbuf {
     void *base;
     volatile pixbuf_state state;
+    tile *tp;
 };
 
 static pixbuf pixbufs[PIXBUF_COUNT];
 
-ILI9341_t3 my_ILI(0, 0, 0, 0, 0, 0);
-
 volatile int fps;
-static volatile uint32_t dma_intr_count;
-static volatile bool clear_dma_busy;
 
-#define CLEAR_DMA
 #ifdef CLEAR_DMA
 
-// static void clear_tile(tile *tp, uint16_t color) // XXX deprecated
-// {
-//     size_t size = tile_size_bytes(tp);
-//     uintptr_t base = (uintptr_t)tp->base;
-//     assert(0x20000000 <= base);
-//     assert(base + size <= 0x20020000);
-//     assert(size >= 16);
-//     assert(!(size & 0xF));      // multiple of 16 bytes
-
-//     // Fill the first 16 bytes with the pixel.  Then
-//     // DMA will duplicate that through the buffer.
-//     uint32_t *p = (uint32_t *)tp->base;
-//     const int pburst = 4;
-//     uint32_t pix_twice = (uint32_t)color << 16 | color;
-//     for (int i = 0; i < pburst; i++)
-//         *p++ = pix_twice;
-
-//     uint32_t ic = dma_intr_count;
-
-//     DMA2_S7CR &= ~DMA_SxCR_EN;
-//     while (DMA2_S7CR & DMA_SxCR_EN)
-//         continue;
-
-//     DMA2_S7PAR  = tp->base;
-//     DMA2_S7M0AR = p;
-//     DMA2_S7NDTR = size - 16;
-//     DMA2_S7FCR  = (DMA_SxFCR_FEIE          |
-//                    DMA_SxFCR_DMDIS         |
-//                    DMA_SxFCR_FTH_4_4_FULL);
-//     DMA2_S7CR   = (DMA_SxCR_CHSEL_0        |
-//                    DMA_SxCR_MBURST_INCR4   |
-//                    DMA_SxCR_PBURST_INCR4   |
-//                    DMA_SxCR_PL_LOW         |
-//                    DMA_SxCR_MSIZE_32BIT    |
-//                    DMA_SxCR_PSIZE_32BIT    |
-//                    DMA_SxCR_MINC           |
-//                    DMA_SxCR_DIR_MEM_TO_MEM |
-//                    DMA_SxCR_TCIE           |
-//                    DMA_SxCR_TEIE           |
-//                    DMA_SxCR_DMEIE          |
-//                    DMA_SxCR_EN);
-
-//     while (dma_intr_count == ic)
-//         continue;
-
-//     // dma2_s7cr   = DMA2_S7CR;
-//     // dma2_s7ndtr = DMA2_S7NDTR;
-//     // dma2_s7par  = DMA2_S7PAR;
-//     // dma2_s7m0ar = DMA2_S7M0AR;
-//     // dma2_s7fcr  = DMA2_S7FCR;
-// }
+static volatile bool clear_dma_busy;
 
 static void start_clear_dma(pixbuf *pix)
 {
-    assert(PIXBUF_SIZE_BYTES == 65536); // XXX
     size_t size = PIXBUF_SIZE_BYTES;
     uintptr_t base = (uintptr_t)pix->base;
     assert(0x20000000 <= base);
@@ -189,15 +138,21 @@ static void start_clear_dma(pixbuf *pix)
     DMA2_S7FCR  = (DMA_SxFCR_FEIE          |
                    DMA_SxFCR_DMDIS         |
                    DMA_SxFCR_FTH_4_4_FULL);
-    DMA2_S7CR   = (DMA_SxCR_CHSEL_0        |
+    DMA2_S7CR = (DMA_SxCR_CHSEL_0          |
                    DMA_SxCR_MBURST_INCR4   |
                    DMA_SxCR_PBURST_INCR4   |
+                  !DMA_SxCR_DBM            |
                    DMA_SxCR_PL_LOW         |
+                  !DMA_SxCR_PINCOS         |
                    DMA_SxCR_MSIZE_32BIT    |
                    DMA_SxCR_PSIZE_32BIT    |
                    DMA_SxCR_MINC           |
+                  !DMA_SxCR_PINC           |
+                  !DMA_SxCR_CIRC           |
                    DMA_SxCR_DIR_MEM_TO_MEM |
+                  !DMA_SxCR_PFCTRL         |
                    DMA_SxCR_TCIE           |
+                  !DMA_SxCR_HTIE           |
                    DMA_SxCR_TEIE           |
                    DMA_SxCR_DMEIE          |
                    DMA_SxCR_EN);
@@ -205,8 +160,6 @@ static void start_clear_dma(pixbuf *pix)
 
 void dma2_stream7_isr(void)
 {
-    dma_intr_count++;
-
     const uint32_t ERR_BITS = DMA_HISR_TEIF7 | DMA_HISR_DMEIF7 | DMA_HISR_FEIF7;
     const uint32_t CLEAR_BITS = DMA_HISR_TCIF7 | DMA_HISR_HTIF7 | ERR_BITS;
     uint32_t dma2_hisr = DMA2_HISR;
@@ -242,20 +195,16 @@ static void clear_pixbuf(pixbuf *pix)
         start_clear_dma(pix);
 }
 
-#else // !CLEAR_DMA
+static void setup_clear_dma(void)
+{
+    rcc_periph_clock_enable(RCC_DMA2);
+    nvic_enable_irq(NVIC_DMA2_STREAM7_IRQ);
+}
 
-// static void clear_tile(tile *tp, uint16_t color) // XXX deprecated
-// {
-//     uint32_t pix_twice = (uint32_t)color << 16 | color;
-//     uint32_t *p = (uint32_t *)tp->base;
-//     size_t n = tile_size_bytes(tp) / sizeof *p;
-//     for (size_t i = 0; i < n; i++)
-//         *p++ = pix_twice;
-// }
+#else // !CLEAR_DMA
 
 static void clear_pixbuf(pixbuf *pix)
 {
-#define BG_DEBUG
 #ifdef BG_DEBUG    
     uint32_t color = calc_bg_color();
     uint32_t pix_twice = color << 16 | color;
@@ -270,19 +219,414 @@ static void clear_pixbuf(pixbuf *pix)
     pix->state = PS_CLEARED;
 }
 
+static void setup_clear_dma(void)
+{}
+
 #endif // CLEAR_DMA
 
-#undef VIDEO_DMA
 #ifdef VIDEO_DMA
 
-#error "Write me!"
+#define LCD_CSX_PORT   GPIOC
+#define LCD_CSX_PIN    GPIO3
+#define LCD_RESX_PORT  GPIOC
+#define LCD_RESX_PIN   GPIO2
+#define LCD_DCX_PORT   GPIOC
+#define LCD_DCX_PIN    GPIO6
+#define LCD_WRX_PORT   GPIOB
+#define LCD_WRX_PIN    GPIO1
+#define LCD_RDX_PORT   GPIOB
+#define LCD_RDX_PIN    GPIO0
+#define LCD_DATA_PORT  GPIOB
+#define LCD_DATA_PINS ((GPIO15 << 1) - GPIO8)
+
+
+#define ILI9341_NOP     0x00
+#define ILI9341_SWRESET 0x01
+#define ILI9341_RDDID   0x04
+#define ILI9341_RDDST   0x09
+
+#define ILI9341_SLPIN   0x10
+#define ILI9341_SLPOUT  0x11
+#define ILI9341_PTLON   0x12
+#define ILI9341_NORON   0x13
+
+#define ILI9341_RDMODE  0x0A
+#define ILI9341_RDMADCTL  0x0B
+#define ILI9341_RDPIXFMT  0x0C
+#define ILI9341_RDIMGFMT  0x0D
+#define ILI9341_RDSELFDIAG  0x0F
+
+#define ILI9341_INVOFF  0x20
+#define ILI9341_INVON   0x21
+#define ILI9341_GAMMASET 0x26
+#define ILI9341_DISPOFF 0x28
+#define ILI9341_DISPON  0x29
+
+#define ILI9341_CASET   0x2A
+#define ILI9341_PASET   0x2B
+#define ILI9341_RAMWR   0x2C
+#define ILI9341_RAMRD   0x2E
+
+#define ILI9341_PTLAR    0x30
+#define ILI9341_MADCTL   0x36
+#define ILI9341_VSCRSADD 0x37
+#define ILI9341_PIXFMT   0x3A
+
+#define ILI9341_FRMCTR1 0xB1
+#define ILI9341_FRMCTR2 0xB2
+#define ILI9341_FRMCTR3 0xB3
+#define ILI9341_INVCTR  0xB4
+#define ILI9341_DFUNCTR 0xB6
+
+#define ILI9341_PWCTR1  0xC0
+#define ILI9341_PWCTR2  0xC1
+#define ILI9341_PWCTR3  0xC2
+#define ILI9341_PWCTR4  0xC3
+#define ILI9341_PWCTR5  0xC4
+#define ILI9341_VMCTR1  0xC5
+#define ILI9341_VMCTR2  0xC7
+
+#define ILI9341_RDID1   0xDA
+#define ILI9341_RDID2   0xDB
+#define ILI9341_RDID3   0xDC
+#define ILI9341_RDID4   0xDD
+
+#define ILI9341_GMCTRP1 0xE0
+#define ILI9341_GMCTRN1 0xE1
+/*
+#define ILI9341_PWCTR6  0xFC
+
+*/
+
+static const uint8_t init_commands[] = {
+    4,  0xEF, 0x03, 0x80, 0x02,
+    4,  0xCF, 0x00, 0XC1, 0X30,
+    5,  0xED, 0x64, 0x03, 0X12, 0X81,
+    4,  0xE8, 0x85, 0x00, 0x78,
+    6,  0xCB, 0x39, 0x2C, 0x00, 0x34, 0x02,
+    2,  0xF7, 0x20,
+    3,  0xEA, 0x00, 0x00,
+    2,  ILI9341_PWCTR1, 0x23, // Power control
+    2,  ILI9341_PWCTR2, 0x10, // Power control
+    3,  ILI9341_VMCTR1, 0x3e, 0x28, // VCM control
+    2,  ILI9341_VMCTR2, 0x86, // VCM control2
+    2,  ILI9341_MADCTL, 0x48, // Memory Access Control
+    2,  ILI9341_PIXFMT, 0x55,
+    3,  ILI9341_FRMCTR1, 0x00, 0x18,
+    4,  ILI9341_DFUNCTR, 0x08, 0x82, 0x27, // Display Function Control
+    2,  0xF2, 0x00, // Gamma Function Disable
+    2,  ILI9341_GAMMASET, 0x01, // Gamma curve selected
+    16, ILI9341_GMCTRP1, 0x0F, 0x31, 0x2B, 0x0C, 0x0E, 0x08,
+                         0x4E, 0xF1, 0x37, 0x07, 0x10, 0x03,
+                         0x0E, 0x09, 0x00, // Set Gamma
+    16, ILI9341_GMCTRN1, 0x00, 0x0E, 0x14, 0x03, 0x11, 0x07,
+                         0x31, 0xC1, 0x48, 0x08, 0x0F, 0x0C,
+                         0x31, 0x36, 0x0F, // Set Gamma
+    0
+};
+
+static volatile bool video_dma_busy;
+
+static void bang8(uint8_t data, bool cmd, bool done)
+{
+    if (cmd) {
+        gpio_clear(LCD_CSX_PORT, LCD_CSX_PIN);
+        gpio_clear(LCD_DCX_PORT, LCD_DCX_PIN);
+    }
+    gpio_clear(LCD_WRX_PORT, LCD_WRX_PIN);
+#if LCD_DATA_PINS == 0x00FF
+    ((volatile uint8_t *)&GPIO_ODR(LCD_DATA_PORT))[0] = data;
+#elif LCD_DATA_PINS == 0xFF00
+    ((volatile uint8_t *)&GPIO_ODR(LCD_DATA_PORT))[1] = data;
+#else
+    #error "data pins must be byte aligned."
+#endif
+    gpio_set(LCD_WRX_PORT, LCD_WRX_PIN);
+    if (cmd)
+        gpio_set(LCD_DCX_PORT, LCD_DCX_PIN);
+    if (done)
+        gpio_set(LCD_CSX_PORT, LCD_CSX_PIN);
+}
+
+static void bang16(uint16_t data, bool done)
+{
+    bang8(data >> 8, false, false);
+    bang8(data & 0xFF, false, done);
+}
+
+static void start_video_dma(tile *tp)
+{
+#ifndef VIDEO_FAKE
+    // Configure DMA.
+    {
+        DMA1_S2CR &= ~DMA_SxCR_EN;
+        while (DMA1_S2CR & DMA_SxCR_EN)
+            continue;
+
+#if LCD_DATA_PINS == 0x00FF
+        DMA1_S2PAR  = (uint8_t *)&GPIO_ODR(LCD_DATA_PORT);
+#elif LCD_DATA_PINS == 0xFF00
+        DMA1_S2PAR  = (uint8_t *)&GPIO_ODR(LCD_DATA_PORT) + 1;
+#else
+        #error        "data pins must be byte aligned."
+#endif
+        DMA1_S2M0AR = tp->pixels;
+        DMA1_S2NDTR = tile_size_bytes(tp);
+        DMA1_S2FCR  = (DMA_SxFCR_FEIE                 |
+                       DMA_SxFCR_DMDIS                |
+                       DMA_SxFCR_FTH_4_4_FULL);
+        DMA1_S2CR   = (DMA_SxCR_CHSEL_5               |
+                       DMA_SxCR_MBURST_INCR4          |
+                       DMA_SxCR_PBURST_SINGLE         |
+                      !DMA_SxCR_CT                    |
+                      !DMA_SxCR_DBM                   |
+                       DMA_SxCR_PL_VERY_HIGH          |
+                      !DMA_SxCR_PINCOS                |
+                       DMA_SxCR_MSIZE_32BIT           |
+                       DMA_SxCR_PSIZE_8BIT            |
+                       DMA_SxCR_MINC                  |
+                      !DMA_SxCR_PINC                  |
+                       DMA_SxCR_CIRC                  |
+                       DMA_SxCR_DIR_MEM_TO_PERIPHERAL |
+                      !DMA_SxCR_PFCTRL                |
+                       DMA_SxCR_TCIE                  |
+                      !DMA_SxCR_HTIE                  |
+                       DMA_SxCR_TEIE                  |
+                       DMA_SxCR_DMEIE                 |
+                       DMA_SxCR_EN);
+    }
+
+    // Configure Timer.
+    {
+        TIM3_CR1    = 0;
+        TIM3_CR1    = (TIM_CR1_CKD_CK_INT             |
+                      !TIM_CR1_ARPE                   |
+                       TIM_CR1_CMS_EDGE               |
+                       TIM_CR1_DIR_UP                 |
+                      !TIM_CR1_OPM                    |
+                       TIM_CR1_URS                    |
+                      !TIM_CR1_UDIS                   |
+                      !TIM_CR1_CEN);
+        TIM3_CR2    = (
+                      !TIM_CR2_TI1S                   |
+                       TIM_CR2_MMS_RESET              |
+                       TIM_CR2_MMS_RESET              |
+                       TIM_CR2_CCDS);
+        TIM3_SMCR   = 0;
+        TIM3_DIER   = (
+                      !TIM_DIER_TDE                   |
+                      !TIM_DIER_CC4DE                 |
+                      !TIM_DIER_CC3DE                 |
+                      !TIM_DIER_CC2DE                 |
+                      !TIM_DIER_CC1DE                 |
+                       TIM_DIER_UDE                   |
+                      !TIM_DIER_TIE                   |
+                      !TIM_DIER_CC4IE                 |
+                      !TIM_DIER_CC3IE                 |
+                      !TIM_DIER_CC2IE                 |
+                      !TIM_DIER_CC1IE                 |
+                      !TIM_DIER_UIE);
+        TIM3_SR     = 0;
+        TIM3_EGR    = 0;
+        TIM3_CCMR1  = 0;
+        TIM3_CCMR2  = TIM_CCMR2_OC4M_PWM2;
+        TIM3_CCER   = TIM_CCER_CC4E;
+        TIM3_CNT    = 0;
+        TIM3_PSC    = 100;
+        TIM3_ARR    = 34;
+        TIM3_CCR4   = 17;
+        TIM3_DCR    = 0;
+        TIM3_DMAR   = 0;
+    }
+#endif
+
+    // Bit-bang the ILI9341 RAM address range.
+    bang8(ILI9341_CASET, true, false);
+    bang16(0, false);
+    bang16(TILE_WIDTH - 1, false);
+
+    bang8(ILI9341_PASET, true, false);
+    bang16(tp->y, false);
+    bang16(tp->y + tp->height - 1, false);
+
+    // Bit-bang the command word.
+    bang8(ILI9341_RAMWR, true, false);
+
+#ifdef VIDEO_FAKE
+    const uint16_t *p = tp->pixels[0];
+    for (size_t i = tp->height * TILE_WIDTH; i--; )
+        bang16(*p++, i == 0);
+    video_dma_busy = false;
+    clear_pixbuf(tp->pix);
+#else
+    // Switch the LCD_WRX pin to timer control.
+    gpio_set_af(LCD_WRX_PORT, GPIO_AF2, LCD_WRX_PIN);
+    gpio_mode_setup(LCD_WRX_PORT, GPIO_MODE_AF, GPIO_PUPD_NONE, LCD_WRX_PIN);
+
+    // Start the timer.
+    TIM3_CR1 |= TIM_CR1_CEN;
+#endif
+}
+
+void dma1_stream2_isr(void)
+{
+    const uint32_t ERR_BITS = DMA_LISR_TEIF2 | DMA_LISR_DMEIF2 | DMA_LISR_FEIF2;
+    const uint32_t CLEAR_BITS = DMA_LISR_TCIF2 | DMA_LISR_HTIF2 | ERR_BITS;
+    uint32_t dma1_lisr = DMA1_LISR;
+    DMA1_LIFCR = dma1_lisr & CLEAR_BITS;
+    assert((dma1_lisr & ERR_BITS) == 0);
+
+    // Assume transfer done.
+    // Switch pin LCD_WRX and LCD_RDX back to GPIO mode and stop the timer.
+    assert(LCD_WRX_PORT == LCD_RDX_PORT);
+    gpio_mode_setup(LCD_WRX_PORT,
+                    GPIO_MODE_OUTPUT, GPIO_PUPD_NONE,
+                    LCD_WRX_PIN | LCD_WRX_PIN);
+    TIM3_CR1 = 0;
+
+    video_dma_busy = false;
+    for (size_t i = 0; i < PIXBUF_COUNT; i++) {
+        pixbuf *pix = &pixbufs[i];
+        if (pix->state == PS_SENDING) {
+            clear_pixbuf(pix);
+        } else if (pix->state == PS_SEND_WAIT && !video_dma_busy) {
+            pix->state = PS_SENDING;
+            video_dma_busy = true;
+            start_video_dma(pix->tp);
+        }
+    }
+}
+
+static void send_tile(tile *tp)
+{
+    bool busy;
+    WITH_INTERRUPTS_MASKED {
+        busy = video_dma_busy;
+        if (busy) {
+            tp->pix->state = PS_SEND_WAIT;
+        } else {
+            video_dma_busy = true;
+            tp->pix->state = PS_SENDING;
+        }
+    }
+    if (!busy)
+        start_video_dma(tp);
+}
+
+volatile uint32_t *tim3_cr1_addr;
+volatile uint32_t *tim3_psc_addr;
+volatile uint32_t *dma1_lisr_addr;
+volatile uint32_t *dma1_s2cr_addr;
+volatile uint32_t *dma1_s2ndtr_addr;
+volatile void    **dma1_s2par_addr;
+volatile void    **dma1_s2m0ar_addr;
+volatile uint32_t *dma1_s2fcr_addr;
+volatile uint32_t *gpiob_odr_addr;
+
+static void setup_video_dma(void)
+{
+    tim3_cr1_addr    = &TIM3_CR1;
+    tim3_psc_addr    = &TIM3_PSC;
+    dma1_lisr_addr   = &DMA1_LISR;
+    dma1_s2cr_addr   = &DMA1_S2CR;
+    dma1_s2ndtr_addr = &DMA1_S2NDTR;
+    dma1_s2par_addr  = &DMA1_S2PAR;
+    dma1_s2m0ar_addr = &DMA1_S2M0AR;
+    dma1_s2fcr_addr  = &DMA1_S2FCR;
+    gpiob_odr_addr   = &GPIOB_ODR;
+
+    // RCC
+    rcc_periph_clock_enable(RCC_GPIOB);
+    rcc_periph_clock_enable(RCC_GPIOC);
+
+    // GPIO
+    {
+        // CSX (chip select)
+        gpio_mode_setup(LCD_CSX_PORT,
+                        GPIO_MODE_OUTPUT, GPIO_PUPD_NONE,
+                        LCD_CSX_PIN);
+        gpio_set(LCD_CSX_PORT, LCD_CSX_PIN);
+
+        // RESX (reset)
+        gpio_mode_setup(LCD_RESX_PORT,
+                        GPIO_MODE_OUTPUT, GPIO_PUPD_NONE,
+                        LCD_RESX_PIN);
+
+        // DCX (data/command)
+        gpio_mode_setup(LCD_DCX_PORT,
+                        GPIO_MODE_OUTPUT, GPIO_PUPD_NONE,
+                        LCD_DCX_PIN);
+        gpio_set(LCD_DCX_PORT, LCD_DCX_PIN);
+
+        // WRX (World Rallycross)
+        gpio_mode_setup(LCD_WRX_PORT,
+                        GPIO_MODE_OUTPUT, GPIO_PUPD_NONE,
+                        LCD_WRX_PIN);
+        gpio_set(LCD_WRX_PORT, LCD_WRX_PIN);
+
+        // RDX (read enable)
+        gpio_mode_setup(LCD_RDX_PORT,
+                        GPIO_MODE_OUTPUT, GPIO_PUPD_NONE,
+                        LCD_RDX_PIN);
+        gpio_set(LCD_RDX_PORT, LCD_RDX_PIN);
+
+        // Do the data pins together.
+        gpio_mode_setup(LCD_DATA_PORT,
+                        GPIO_MODE_OUTPUT,
+                        GPIO_PUPD_NONE,
+                        LCD_DATA_PINS);
+    }
+        
+    // TIMER
+    rcc_periph_clock_enable(RCC_TIM3);
+
+    // DMA: DMA controller 1, stream 2, channel 5.
+    rcc_periph_clock_enable(RCC_DMA1);
+    nvic_enable_irq(NVIC_DMA1_STREAM2_IRQ);
+
+    // Initialize ILI9341.
+    {
+        // toggle RST low to reset
+        gpio_set(LCD_RESX_PORT, LCD_RESX_PIN);
+        delay_msec(5);
+        gpio_clear(LCD_RESX_PORT, LCD_RESX_PIN);
+        delay_msec(20);
+        gpio_set(LCD_RESX_PORT, LCD_RESX_PIN);
+        delay_msec(150);
+
+        // Send commands to ILI9341.
+        const uint8_t *addr = init_commands;
+        while (1) {
+            uint8_t count = *addr++;
+            if (count-- == 0)
+                break;
+            bang8(*addr++, true, false);
+            while (count-- > 0) {
+                bang8(*addr++, false, false);
+            }
+        }
+        bang8(ILI9341_SLPOUT, true, true); // Exit sleep.
+
+        delay_msec(120);                
+        bang8(ILI9341_DISPON, true, true);
+    }
+}
 
 #else
+
+#include "ILI9341.h"
+
+ILI9341_t3 my_ILI(0, 0, 0, 0, 0, 0);
 
 static void send_tile(tile *tp)
 {
     my_ILI.writeRect(0, tp->y, TILE_WIDTH, tp->height, tp->pixels[0]);
     clear_pixbuf(tp->pix);
+}
+
+static void setup_video_dma(void)
+{
+    my_ILI.begin();
 }
 
 #endif
@@ -314,26 +658,19 @@ static void setup_pixbufs(void)
 
 static void setup(void)
 {
+
     rcc_clock_setup_hse_3v3(&MY_CLOCK);
 
-    setup_systick(MY_CLOCK.ahb_frequency);
+    // rcc_periph_clock_enable(RCC_DBGMCU);
+    DBGMCU_CR |= DBGMCU_CR_STOP;
 
+    setup_systick(MY_CLOCK.ahb_frequency);
     setup_heartbeat();
 
-    rcc_periph_clock_enable(RCC_DMA2);
-    nvic_enable_irq(NVIC_DMA2_STREAM7_IRQ);
-    // dma2_hisr_addr = &DMA2_HISR;
-    // dma2_s7cr_addr = &DMA2_S7CR;
-    // dma2_s7ndtr_addr = &DMA2_S7NDTR;
-    // dma2_s7par_addr = &DMA2_S7PAR;
-    // dma2_s7m0ar_addr = &DMA2_S7M0AR;
-    // dma2_s7fcr_addr = &DMA2_S7FCR;
+    setup_video_dma();
+    setup_clear_dma();
 
     setup_pixbufs();
-
-    my_ILI.begin();
-
-    memset((void *)0x20000000, 0x11, 128 * 1024);
 }
 
 static void alloc_tile(tile *tp, size_t y, size_t h)
@@ -353,16 +690,21 @@ static void alloc_tile(tile *tp, size_t y, size_t h)
     tp->height = h;
     tp->y      = y;
     tp->pix    = pix;
+    pix->tp    = tp;
 }
 
 static void draw_tile(tile *tp)
 {
-    size_t y0 = MAX((320 - 240) / 2u, tp->y);
-    size_t y1 = MIN((320 + 240) / 2u, tp->y + tp->height);
-        
-    for (size_t y = y0; y < y1; y++) {
-        size_t x = y - (320 - 240) / 2;
-        tp->pixels[y - tp->y][x] = 0x0000;
+    for (size_t y = tp->y; y < tp->y + tp->height; y++) {
+        if (y < 240) {
+            tp->pixels[y - tp->y][y] = 0x0000;
+            tp->pixels[y - tp->y][239 - y] = 0x0000;
+        }
+        int my = 319 - y;
+        if (my < 240) {
+            tp->pixels[y - tp->y][my] = 0x0000;
+            tp->pixels[y - tp->y][239 - my] = 0x0000;
+        }
     }
 }
 
@@ -372,10 +714,6 @@ static void draw_frame(void)
 
     for (size_t y = 0; y < SCREEN_HEIGHT; y += one_tile.height) {
         size_t h = MIN(TILE_MAX_HEIGHT, SCREEN_HEIGHT - y);
-        //XXX
-        // size_t h = SCREEN_HEIGHT - y;
-        // if (h > TILE_MAX_HEIGHT)
-        //     h = TILE_MAX_HEIGHT;
         alloc_tile(&one_tile, y, h);
         draw_tile(&one_tile);
         send_tile(&one_tile);
@@ -387,19 +725,8 @@ static void run(void)
     int frame_counter = 0;
     uint32_t next_time = 1000;
 
-    // tile bigbuf;
-    // bigbuf.pixels   = (typeof bigbuf.pixels)0x20000000;
-    // bigbuf.height = 273;
-    // bigbuf.y      = 0;
-
     while (1) {
-#if 0
-        clear_tile(&bigbuf, 0x07ff);
-        draw_tile(&bigbuf);
-        send_tile(&bigbuf);
-#else
         draw_frame();
-#endif
         frame_counter++;
         if (system_millis >= next_time) {
             fps = frame_counter;

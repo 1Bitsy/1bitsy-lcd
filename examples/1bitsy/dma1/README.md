@@ -33,6 +33,17 @@ nsec.
 See the Technical Reference, Document RM0090, Table 42, "DMA1 Request
 Mapping".
 
+> 18.3.7 Forced output Mode
+>
+> In output mode (CCMRx.CCxS bits = 00), each output compare signal
+> can be forced to active or inactive level directly by software,
+> independently of any comparison between the output compare register
+> and the counter.
+
+So perhaps there's no need to switch the LCD_WRX and LCD_RDX pins
+in and out of Alternate Function mode.
+
+I want PWM Mode (18.3.9).  PWM mode 2: OCxREF is active when CNT > CCR1.
 
 
   - Timer: 3
@@ -43,8 +54,29 @@ Mapping".
   - comparator value: 42 (initially)
   - trigger DMA: on overflow
   - DMA controller: DMA1
-  - DMA channel: 5
-  - DMA stream: 4
+  - DMA stream: 2
+  - DMA channel: 5 (TIM3\_CH4 and TIM3\_UP).
+  - TIM3_ARR = 168 MHz / 5 MHz - 1
+  - ARPE = don't care
+  - UDIS = don't care
+  - upcounting mode
+  - SMCR.SMS = CLK_INT
+  - TIx?
+  - CCMRx.OCxM = PWM mode 2
+  - DBGMCU.DBG_TIM3_STOP = Yes
+  
+
+### One-pulse mode
+
+It looks intriguing.  It means we wouldn't have to worry about overflowing the
+buffer.  (That's especially important when reading.)
+
+It looks like Timer A would run in PWM mode as normal and trigger
+timer B on every overflow.  Timer B would run in one-pulse mode and on
+counting the right number of triggers, it would generate a single DMA to
+write Timer A's register and stop it.  And raise an interrupt.
+
+
 
 
 ## DMA for video I/O
@@ -192,5 +224,4 @@ The main loop is:
     stop timer
     check for errors
     buffer state = clearing
-    if timer == 0:
-        ...
+    find and start next buffer, if any.
