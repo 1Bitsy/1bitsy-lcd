@@ -3,6 +3,7 @@
 #undef CLEAR_DMA
 #define VIDEO_DMA
 #undef VIDEO_FAKE
+#undef WRONG_DMA
 
 // C/POSIX headers
 #include <assert.h>
@@ -59,6 +60,8 @@ static inline uint16_t calc_bg_color(void)
     uint32_t b = frame % 3 == 2 ? 0xFF : frame & 0xFF;
     uint32_t color = (r & 0xF8)  << 8 | (g & 0xFC) << 3 | b >> 3;
     frame++;
+    // if (frame == 3 * 256)
+    //     frame = 0;
     return color;
 }
 #endif
@@ -201,7 +204,7 @@ static void setup_clear_dma(void)
     nvic_enable_irq(NVIC_DMA2_STREAM7_IRQ);
 }
 
-#else // !CLEAR_DMA
+#else /* !CLEAR_DMA */
 
 static void clear_pixbuf(pixbuf *pix)
 {
@@ -222,7 +225,7 @@ static void clear_pixbuf(pixbuf *pix)
 static void setup_clear_dma(void)
 {}
 
-#endif // CLEAR_DMA
+#endif /* CLEAR_DMA */
 
 #ifdef VIDEO_DMA
 
@@ -293,10 +296,8 @@ static void setup_clear_dma(void)
 
 #define ILI9341_GMCTRP1 0xE0
 #define ILI9341_GMCTRN1 0xE1
-/*
-#define ILI9341_PWCTR6  0xFC
-
-*/
+// #define ILI9341_PWCTR6  0xFC
+#define ILI9341_IFCTL   0xF6
 
 static const uint8_t init_commands[] = {
     4,  0xEF, 0x03, 0x80, 0x02,
@@ -310,6 +311,9 @@ static const uint8_t init_commands[] = {
     2,  ILI9341_PWCTR2, 0x10, // Power control
     3,  ILI9341_VMCTR1, 0x3e, 0x28, // VCM control
     2,  ILI9341_VMCTR2, 0x86, // VCM control2
+
+    4,  ILI9341_IFCTL, 0x00, 0x00, 0x20,
+
     2,  ILI9341_MADCTL, 0x48, // Memory Access Control
     2,  ILI9341_PIXFMT, 0x55,
     3,  ILI9341_FRMCTR1, 0x00, 0x18,
@@ -359,6 +363,7 @@ static void start_video_dma(tile *tp)
 #ifndef VIDEO_FAKE
     // Configure DMA.
     {
+#ifdef WRONG_DMA
         DMA1_S2CR &= ~DMA_SxCR_EN;
         while (DMA1_S2CR & DMA_SxCR_EN)
             continue;
@@ -410,7 +415,6 @@ static void start_video_dma(tile *tp)
         TIM3_CR2    = (
                       !TIM_CR2_TI1S                   |
                        TIM_CR2_MMS_RESET              |
-                       TIM_CR2_MMS_RESET              |
                        TIM_CR2_CCDS);
         TIM3_SMCR   = 0;
         TIM3_DIER   = (
@@ -432,13 +436,110 @@ static void start_video_dma(tile *tp)
         TIM3_CCMR2  = TIM_CCMR2_OC4M_PWM2;
         TIM3_CCER   = TIM_CCER_CC4E;
         TIM3_CNT    = 0;
-        TIM3_PSC    = 100;
-        TIM3_ARR    = 34;
-        TIM3_CCR4   = 17;
+        TIM3_PSC    = 10000;
+        TIM3_ARR    = 3400;
+        TIM3_CCR4   = 1700;
         TIM3_DCR    = 0;
         TIM3_DMAR   = 0;
     }
+#else
+        DMA2_S1CR &= ~DMA_SxCR_EN;
+        while (DMA2_S1CR & DMA_SxCR_EN)
+            continue;
+
+#if LCD_DATA_PINS == 0x00FF
+        DMA2_S1PAR  = (uint8_t *)&GPIO_ODR(LCD_DATA_PORT);
+#elif LCD_DATA_PINS == 0xFF00
+        DMA2_S1PAR  = (uint8_t *)&GPIO_ODR(LCD_DATA_PORT) + 1;
+#else
+        #error        "data pins must be byte aligned."
 #endif
+        DMA2_S1M0AR = tp->pixels;
+        DMA2_S1NDTR = tile_size_bytes(tp);
+        DMA2_S1FCR  = (DMA_SxFCR_FEIE                 |
+                       DMA_SxFCR_DMDIS                |
+                       DMA_SxFCR_FTH_4_4_FULL);
+        DMA2_S1CR   = (DMA_SxCR_CHSEL_7               |
+                       DMA_SxCR_MBURST_INCR4          |
+                       DMA_SxCR_PBURST_SINGLE         |
+                      !DMA_SxCR_CT                    |
+                      !DMA_SxCR_DBM                   |
+                       DMA_SxCR_PL_VERY_HIGH          |
+                      !DMA_SxCR_PINCOS                |
+                       DMA_SxCR_MSIZE_32BIT           |
+                       DMA_SxCR_PSIZE_8BIT            |
+                       DMA_SxCR_MINC                  |
+                      !DMA_SxCR_PINC                  |
+                       DMA_SxCR_CIRC                  |
+                       DMA_SxCR_DIR_MEM_TO_PERIPHERAL |
+                      !DMA_SxCR_PFCTRL                |
+                       DMA_SxCR_TCIE                  |
+                      !DMA_SxCR_HTIE                  |
+                       DMA_SxCR_TEIE                  |
+                       DMA_SxCR_DMEIE                 |
+                       DMA_SxCR_EN);
+    }
+
+    // Configure Timer.
+    {
+        TIM8_CR1    = 0;
+        TIM8_CR1    = (TIM_CR1_CKD_CK_INT             |
+                      !TIM_CR1_ARPE                   |
+                       TIM_CR1_CMS_EDGE               |
+                       TIM_CR1_DIR_UP                 |
+                      !TIM_CR1_OPM                    |
+                     ! TIM_CR1_URS                    | // XXX
+                      !TIM_CR1_UDIS                   |
+                      !TIM_CR1_CEN);
+        TIM8_CR2    = (
+                      !TIM_CR2_TI1S                   |
+                       TIM_CR2_MMS_RESET              |
+                       TIM_CR2_CCDS);
+        TIM8_SMCR   = 0;
+        TIM8_DIER   = (
+                      !TIM_DIER_TDE                   |
+                      !TIM_DIER_CC4DE                 |
+                      !TIM_DIER_CC3DE                 |
+                      !TIM_DIER_CC2DE                 |
+                      !TIM_DIER_CC1DE                 |
+                       TIM_DIER_UDE                   |
+                      !TIM_DIER_TIE                   |
+                      !TIM_DIER_CC4IE                 |
+                      !TIM_DIER_CC3IE                 |
+                      !TIM_DIER_CC2IE                 |
+                      !TIM_DIER_CC1IE                 |
+                      !TIM_DIER_UIE);
+        TIM8_SR     = 0;
+        TIM8_EGR    = TIM_EGR_UG;
+        TIM8_CCMR1  = 0;
+        TIM8_CCMR2  = (TIM_CCMR2_CC3S_OUT             |
+                       TIM_CCMR2_OC3M_PWM2);
+        TIM8_CCER   = TIM_CCER_CC3NE; // XXX
+        TIM8_CCER   = (
+                      !TIM_CCER_CC4P                  |
+                      !TIM_CCER_CC4E                  |
+                      !TIM_CCER_CC3NP                 |
+                       TIM_CCER_CC3NE                 |
+                      !TIM_CCER_CC3P                  |
+                      !TIM_CCER_CC3E                  |
+                      !TIM_CCER_CC2NP                 |
+                      !TIM_CCER_CC2NE                 |
+                      !TIM_CCER_CC2P                  |
+                      !TIM_CCER_CC2E                  |
+                      !TIM_CCER_CC1NP                 |
+                      !TIM_CCER_CC1NE                 |
+                      !TIM_CCER_CC1P                  |
+                      !TIM_CCER_CC1E);
+        TIM8_CNT    = 0;
+        TIM8_PSC    = 0;
+        TIM8_ARR    = 34/2;
+        TIM8_CCR3   = 17/2;
+        TIM8_BDTR   = TIM_BDTR_MOE | TIM_BDTR_OSSR;
+        // TIM8_DCR    = 0;
+        // TIM8_DMAR   = 0;
+    }
+#endif /* WRONG_DMA */
+#endif /* FAKE_VIDEO */
 
     // Bit-bang the ILI9341 RAM address range.
     bang8(ILI9341_CASET, true, false);
@@ -460,13 +561,23 @@ static void start_video_dma(tile *tp)
     clear_pixbuf(tp->pix);
 #else
     // Switch the LCD_WRX pin to timer control.
+#ifdef WRONG_DMA
     gpio_set_af(LCD_WRX_PORT, GPIO_AF2, LCD_WRX_PIN);
-    gpio_mode_setup(LCD_WRX_PORT, GPIO_MODE_AF, GPIO_PUPD_NONE, LCD_WRX_PIN);
+#else
+    gpio_set_af(LCD_WRX_PORT, GPIO_AF3, LCD_WRX_PIN);
+#endif
+    gpio_mode_setup(LCD_WRX_PORT, GPIO_MODE_AF, GPIO_PUPD_PULLUP, LCD_WRX_PIN);
 
     // Start the timer.
+#ifdef WRONG_DMA
     TIM3_CR1 |= TIM_CR1_CEN;
+#else
+    TIM8_CR1 |= TIM_CR1_CEN;
+#endif
 #endif
 }
+
+#ifdef WRONG_DMA
 
 void dma1_stream2_isr(void)
 {
@@ -497,6 +608,50 @@ void dma1_stream2_isr(void)
     }
 }
 
+#else
+
+void dma2_stream1_isr(void)
+{
+    const uint32_t ERR_BITS = DMA_LISR_TEIF1 | DMA_LISR_DMEIF1 | DMA_LISR_FEIF1;
+    const uint32_t CLEAR_BITS = DMA_LISR_TCIF1 | DMA_LISR_HTIF1 | ERR_BITS;
+    uint32_t dma2_lisr = DMA2_LISR;
+    DMA2_LIFCR = dma2_lisr & CLEAR_BITS;
+    assert((dma2_lisr & ERR_BITS) == 0);
+
+    if (dma2_lisr & DMA_LISR_TCIF1) {
+        // Transfer done.
+        //  - Deselect ILI9341.
+        //  - Switch LCD_WRX and LCD_RDX pins back to GPIO mode.
+        //  - Stop the timer.
+        //  - Stop the DMA.
+        gpio_set(LCD_CSX_PORT, LCD_CSX_PIN);
+        gpio_mode_setup(LCD_WRX_PORT,
+                        GPIO_MODE_OUTPUT, GPIO_PUPD_NONE,
+                        LCD_WRX_PIN);
+        gpio_mode_setup(LCD_RDX_PORT,
+                        GPIO_MODE_OUTPUT, GPIO_PUPD_NONE,
+                        LCD_RDX_PIN);
+        TIM8_CR1   = 0;
+        DMA2_S1CR  = 0;
+        DMA2_LIFCR = CLEAR_BITS;
+
+        video_dma_busy = false;
+        for (size_t i = 0; i < PIXBUF_COUNT; i++) {
+            pixbuf *pix = &pixbufs[i];
+            if (pix->state == PS_SENDING) {
+                pix->tp = NULL;
+                clear_pixbuf(pix);
+            } else if (pix->state == PS_SEND_WAIT && !video_dma_busy) {
+                pix->state = PS_SENDING;
+                video_dma_busy = true;
+                start_video_dma(pix->tp);
+            }
+        }
+    }
+}
+
+#endif
+
 static void send_tile(tile *tp)
 {
     bool busy;
@@ -513,6 +668,7 @@ static void send_tile(tile *tp)
         start_video_dma(tp);
 }
 
+#ifdef WRONG_DMA
 volatile uint32_t *tim3_cr1_addr;
 volatile uint32_t *tim3_psc_addr;
 volatile uint32_t *dma1_lisr_addr;
@@ -521,10 +677,23 @@ volatile uint32_t *dma1_s2ndtr_addr;
 volatile void    **dma1_s2par_addr;
 volatile void    **dma1_s2m0ar_addr;
 volatile uint32_t *dma1_s2fcr_addr;
+#else
+volatile uint32_t *tim8_cr1_addr;
+volatile uint32_t *tim8_cnt_addr;
+volatile uint32_t *tim8_arr_addr;
+volatile uint32_t *tim8_psc_addr;
+volatile uint32_t *dma2_lisr_addr;
+volatile uint32_t *dma2_s1cr_addr;
+volatile uint32_t *dma2_s1ndtr_addr;
+volatile void    **dma2_s1par_addr;
+volatile void    **dma2_s1m0ar_addr;
+volatile uint32_t *dma2_s1fcr_addr;
+#endif
 volatile uint32_t *gpiob_odr_addr;
 
 static void setup_video_dma(void)
 {
+#ifdef WRONG_DMA
     tim3_cr1_addr    = &TIM3_CR1;
     tim3_psc_addr    = &TIM3_PSC;
     dma1_lisr_addr   = &DMA1_LISR;
@@ -533,6 +702,18 @@ static void setup_video_dma(void)
     dma1_s2par_addr  = &DMA1_S2PAR;
     dma1_s2m0ar_addr = &DMA1_S2M0AR;
     dma1_s2fcr_addr  = &DMA1_S2FCR;
+#else
+    tim8_cr1_addr    = &TIM8_CR1;
+    tim8_cnt_addr    = &TIM8_CNT;
+    tim8_arr_addr    = &TIM8_ARR;
+    tim8_psc_addr    = &TIM8_PSC;
+    dma2_lisr_addr   = &DMA2_LISR;
+    dma2_s1cr_addr   = &DMA2_S1CR;
+    dma2_s1ndtr_addr = &DMA2_S1NDTR;
+    dma2_s1par_addr  = &DMA2_S1PAR;
+    dma2_s1m0ar_addr = &DMA2_S1M0AR;
+    dma2_s1fcr_addr  = &DMA2_S1FCR;
+#endif
     gpiob_odr_addr   = &GPIOB_ODR;
 
     // RCC
@@ -577,12 +758,21 @@ static void setup_video_dma(void)
                         LCD_DATA_PINS);
     }
         
+#ifdef WRONG_DMA
     // TIMER
     rcc_periph_clock_enable(RCC_TIM3);
 
     // DMA: DMA controller 1, stream 2, channel 5.
     rcc_periph_clock_enable(RCC_DMA1);
     nvic_enable_irq(NVIC_DMA1_STREAM2_IRQ);
+#else
+    // TIMER
+    rcc_periph_clock_enable(RCC_TIM8);
+
+    // DMA: DMA controller 2, stream 1, channel 7.
+    rcc_periph_clock_enable(RCC_DMA2);
+    nvic_enable_irq(NVIC_DMA2_STREAM1_IRQ);
+#endif
 
     // Initialize ILI9341.
     {
@@ -706,14 +896,19 @@ static void draw_tile(tile *tp)
             tp->pixels[y - tp->y][239 - my] = 0x0000;
         }
     }
+
+    // // Debug pattern
+    // for (size_t x = 0; x < 240; x++)
+    //     tp->pixels[0][x] = (x & 1) ? 0xFFFF : 0x0000;
 }
 
 static void draw_frame(void)
 {
-    tile one_tile;
+    size_t h;
 
-    for (size_t y = 0; y < SCREEN_HEIGHT; y += one_tile.height) {
-        size_t h = MIN(TILE_MAX_HEIGHT, SCREEN_HEIGHT - y);
+    for (size_t y = 0; y < SCREEN_HEIGHT; y += h) {
+        h = MIN(TILE_MAX_HEIGHT, SCREEN_HEIGHT - y);
+        tile one_tile;
         alloc_tile(&one_tile, y, h);
         draw_tile(&one_tile);
         send_tile(&one_tile);
