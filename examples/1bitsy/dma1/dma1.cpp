@@ -152,6 +152,8 @@ volatile int fps;
 
 static volatile bool clear_dma_busy;
 
+#ifdef WRONG_TILE_LIFE
+
 static void start_clear_dma(pixbuf *pix)
 {
     size_t size = PIXBUF_SIZE_BYTES;
@@ -206,6 +208,66 @@ static void start_clear_dma(pixbuf *pix)
                    DMA_SxCR_EN);
 }
 
+#else
+
+static void start_clear_dma(tile *tp)
+{
+    size_t size = TILE_MAX_SIZE_BYTES;
+    uintptr_t base = (uintptr_t)tp->pixels;
+    assert(0x20000000 <= base);
+    assert(base + size <= 0x20020000);
+    assert(size >= 16);
+    assert(!(size & 0xF));      // multiple of 16 bytes
+
+    // Fill the first 16 bytes with the pixel.  Then
+    // DMA will duplicate that through the buffer.
+    uint32_t *p = (uint32_t *)tp->pixels;
+    const int pburst = 4;
+
+#ifdef BG_DEBUG    
+    uint32_t color = calc_bg_color();
+    uint32_t pix_twice = color << 16 | color;
+#else
+    uint32_t pix_twice = BG_COLOR << 16 | BG_COLOR;
+#endif
+
+    for (int i = 0; i < pburst; i++)
+        *p++ = pix_twice;
+
+    DMA2_S7CR &= ~DMA_SxCR_EN;
+    while (DMA2_S7CR & DMA_SxCR_EN)
+        continue;
+
+    DMA2_S7PAR  = (void *)tp->pixels;
+    DMA2_S7M0AR = p;
+    DMA2_S7NDTR = (size - 16) / 4;
+    DMA2_S7FCR  = (DMA_SxFCR_FEIE          |
+                   DMA_SxFCR_DMDIS         |
+                   DMA_SxFCR_FTH_4_4_FULL);
+    DMA2_S7CR = (DMA_SxCR_CHSEL_0          |
+                   DMA_SxCR_MBURST_INCR4   |
+                   DMA_SxCR_PBURST_INCR4   |
+                  !DMA_SxCR_DBM            |
+                   DMA_SxCR_PL_LOW         |
+                  !DMA_SxCR_PINCOS         |
+                   DMA_SxCR_MSIZE_32BIT    |
+                   DMA_SxCR_PSIZE_32BIT    |
+                   DMA_SxCR_MINC           |
+                  !DMA_SxCR_PINC           |
+                  !DMA_SxCR_CIRC           |
+                   DMA_SxCR_DIR_MEM_TO_MEM |
+                  !DMA_SxCR_PFCTRL         |
+                   DMA_SxCR_TCIE           |
+                  !DMA_SxCR_HTIE           |
+                   DMA_SxCR_TEIE           |
+                   DMA_SxCR_DMEIE          |
+                   DMA_SxCR_EN);
+}
+
+#endif // WRONG_TILE_LIFE
+
+#ifdef WRONG_TILE_LIFE
+
 void dma2_stream7_isr(void)
 {
     const uint32_t ERR_BITS = DMA_HISR_TEIF7 | DMA_HISR_DMEIF7 | DMA_HISR_FEIF7;
@@ -227,6 +289,33 @@ void dma2_stream7_isr(void)
     }
 }
 
+#else
+
+void dma2_stream7_isr(void)
+{
+    const uint32_t ERR_BITS = DMA_HISR_TEIF7 | DMA_HISR_DMEIF7 | DMA_HISR_FEIF7;
+    const uint32_t CLEAR_BITS = DMA_HISR_TCIF7 | DMA_HISR_HTIF7 | ERR_BITS;
+    uint32_t dma2_hisr = DMA2_HISR;
+    DMA2_HIFCR = dma2_hisr & CLEAR_BITS;
+    assert((dma2_hisr & ERR_BITS) == 0);
+
+    clear_dma_busy = false;
+    for (size_t i = 0; i < TILE_COUNT; i++) {
+        tile *tp = &tiles[i];
+        if (tp->state == TS_CLEARING) {
+            tp->state = TS_CLEARED;
+        } else if (tp->state == TS_CLEAR_WAIT && !clear_dma_busy) {
+            tp->state = TS_CLEARING;
+            clear_dma_busy = true;
+            start_clear_dma(tp);
+        }
+    }
+}
+
+#endif // WRONG_TILE_LIFE
+
+#ifdef WRONG_TILE_LIFE
+
 static void clear_pixbuf(pixbuf *pix)
 {
     bool busy;
@@ -242,6 +331,26 @@ static void clear_pixbuf(pixbuf *pix)
     if (!busy)
         start_clear_dma(pix);
 }
+
+#else
+
+static void clear_tile(tile *tp)
+{
+    bool busy;
+    WITH_INTERRUPTS_MASKED {
+        busy = clear_dma_busy;
+        if (busy) {
+            tp->state = TS_CLEAR_WAIT;
+        } else {
+            clear_dma_busy = true;
+            tp->state = TS_CLEARING;
+        }
+    }
+    if (!busy)
+        start_clear_dma(tp);
+}
+
+#endif // WRONG_TILE_LIFE
 
 static void setup_clear_dma(void)
 {
@@ -540,10 +649,17 @@ static void start_video_dma(tile *tp)
 
 #ifdef VIDEO_FAKE
     const uint16_t *p = tp->pixels[0];
-    for (size_t i = tp->height * TILE_WIDTH; i--; )
-        bang16(*p++, i == 0);
+    for (size_t i = tp->height * TILE_WIDTH; i--; ) {
+        // Little-endian order here.
+        bang8(*p & 0xFF, false, false);
+        bang8(*p++ >> 8, false, i == 0);
+    }
     video_dma_busy = false;
+#ifdef WRONG_TILE_LIFE
     clear_pixbuf(tp->pix);
+#else
+    clear_tile(tp);
+#endif
 #else
     // Switch the LCD_WRX pin to timer control.
     gpio_set_af(LCD_WRX_PORT, GPIO_AF3, LCD_WRX_PIN);
@@ -754,7 +870,11 @@ ILI9341_t3 my_ILI(0, 0, 0, 0, 0, 0);
 static void send_tile(tile *tp)
 {
     my_ILI.writeRect(0, tp->y, TILE_WIDTH, tp->height, tp->pixels[0]);
+#ifdef WRONG_TILE_LIFE
     clear_pixbuf(tp->pix);
+#else
+    clear_tile(tp);
+#endif
 }
 
 static void setup_video_dma(void)
