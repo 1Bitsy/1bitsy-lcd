@@ -19,11 +19,15 @@ and T8C3N.  All three of those are 16 bits and can generate DMA
 requests.  Timers 1 and 8 have a max speed of 168 MHz.  Timer 3's
 max speed is 84 MHz.  84 MHz is fine.
 
+But Timer 3 can only trigger DMA from DMA1.  DMA1 can't access
+AHB1 registers.  Tbe GPIO register we want is in AHB1 space.  So
+we have to use TIM1 or TIM8.
+
 The LCD_RD pin is PB0.  It has similar alternate functions T1C2N,
 T3C3, T8C2N.  So, if we later implement read DMA, the same
 considerations apply.
 
-So I'll use Timer 3.
+So I'll use Timer 8.
 
 Initially I will run the timer at 5 MHz, 50% duty
 cycle.  (Data setup time: 100 nsec).  The ILI9341 datasheets says
@@ -46,23 +50,23 @@ in and out of Alternate Function mode.
 I want PWM Mode (18.3.9).  PWM mode 2: OCxREF is active when CNT > CCR1.
 
 
-  - Timer: 3
-  - Write comparator: T3C4
-  - Read comparator: T3C3 (future)
+  - Timer: 8
+  - Write comparator: T8C3
+  - Read comparator: T8C2 (future)
   - Mode: count up
-  - overflow value: 84 (initially)
-  - comparator value: 42 (initially)
+  - overflow value: 34 (initially)
+  - comparator value: 17 (initially)
   - trigger DMA: on overflow
-  - DMA controller: DMA1
-  - DMA stream: 2
-  - DMA channel: 5 (TIM3\_CH4 and TIM3\_UP).
-  - TIM3_ARR = 168 MHz / 5 MHz - 1
+  - DMA controller: DMA2
+  - DMA stream: 1
+  - DMA channel: 7 (TIM8\_UP).
+  - TIM8_ARR = 168 MHz / 5 MHz - 1
   - ARPE = don't care
   - UDIS = don't care
   - upcounting mode
   - SMCR.SMS = CLK_INT
   - TIx?
-  - CCMRx.OCxM = PWM mode 2
+  - CCMRx.OCxM = PWM mode 1
   - DBGMCU.DBG_TIM3_STOP = Yes
   
 

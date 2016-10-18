@@ -3,7 +3,6 @@
 #undef CLEAR_DMA
 #define VIDEO_DMA
 #undef VIDEO_FAKE
-#undef WRONG_DMA
 #undef WRONG_TILE_LIFE
 
 // C/POSIX headers
@@ -430,86 +429,6 @@ static void start_video_dma(tile *tp)
 #ifndef VIDEO_FAKE
     // Configure DMA.
     {
-// #ifdef WRONG_DMA
-//         DMA1_S2CR &= ~DMA_SxCR_EN;
-//         while (DMA1_S2CR & DMA_SxCR_EN)
-//             continue;
-
-// #if LCD_DATA_PINS == 0x00FF
-//         DMA1_S2PAR  = (uint8_t *)&GPIO_ODR(LCD_DATA_PORT);
-// #elif LCD_DATA_PINS == 0xFF00
-//         DMA1_S2PAR  = (uint8_t *)&GPIO_ODR(LCD_DATA_PORT) + 1;
-// #else
-//         #error        "data pins must be byte aligned."
-// #endif
-//         DMA1_S2M0AR = tp->pixels;
-//         DMA1_S2NDTR = tile_size_bytes(tp);
-//         DMA1_S2FCR  = (DMA_SxFCR_FEIE                 |
-//                        DMA_SxFCR_DMDIS                |
-//                        DMA_SxFCR_FTH_4_4_FULL);
-//         DMA1_S2CR   = (DMA_SxCR_CHSEL_5               |
-//                        DMA_SxCR_MBURST_INCR4          |
-//                        DMA_SxCR_PBURST_SINGLE         |
-//                       !DMA_SxCR_CT                    |
-//                       !DMA_SxCR_DBM                   |
-//                        DMA_SxCR_PL_VERY_HIGH          |
-//                       !DMA_SxCR_PINCOS                |
-//                        DMA_SxCR_MSIZE_32BIT           |
-//                        DMA_SxCR_PSIZE_8BIT            |
-//                        DMA_SxCR_MINC                  |
-//                       !DMA_SxCR_PINC                  |
-//                        DMA_SxCR_CIRC                  |
-//                        DMA_SxCR_DIR_MEM_TO_PERIPHERAL |
-//                       !DMA_SxCR_PFCTRL                |
-//                        DMA_SxCR_TCIE                  |
-//                       !DMA_SxCR_HTIE                  |
-//                        DMA_SxCR_TEIE                  |
-//                        DMA_SxCR_DMEIE                 |
-//                        DMA_SxCR_EN);
-//     }
-
-//     // Configure Timer.
-//     {
-//         TIM3_CR1    = 0;
-//         TIM3_CR1    = (TIM_CR1_CKD_CK_INT             |
-//                       !TIM_CR1_ARPE                   |
-//                        TIM_CR1_CMS_EDGE               |
-//                        TIM_CR1_DIR_UP                 |
-//                       !TIM_CR1_OPM                    |
-//                        TIM_CR1_URS                    |
-//                       !TIM_CR1_UDIS                   |
-//                       !TIM_CR1_CEN);
-//         TIM3_CR2    = (
-//                       !TIM_CR2_TI1S                   |
-//                        TIM_CR2_MMS_RESET              |
-//                        TIM_CR2_CCDS);
-//         TIM3_SMCR   = 0;
-//         TIM3_DIER   = (
-//                       !TIM_DIER_TDE                   |
-//                       !TIM_DIER_CC4DE                 |
-//                       !TIM_DIER_CC3DE                 |
-//                       !TIM_DIER_CC2DE                 |
-//                       !TIM_DIER_CC1DE                 |
-//                        TIM_DIER_UDE                   |
-//                       !TIM_DIER_TIE                   |
-//                       !TIM_DIER_CC4IE                 |
-//                       !TIM_DIER_CC3IE                 |
-//                       !TIM_DIER_CC2IE                 |
-//                       !TIM_DIER_CC1IE                 |
-//                       !TIM_DIER_UIE);
-//         TIM3_SR     = 0;
-//         TIM3_EGR    = 0;
-//         TIM3_CCMR1  = 0;
-//         TIM3_CCMR2  = TIM_CCMR2_OC4M_PWM2;
-//         TIM3_CCER   = TIM_CCER_CC4E;
-//         TIM3_CNT    = 0;
-//         TIM3_PSC    = 10000;
-//         TIM3_ARR    = 3400;
-//         TIM3_CCR4   = 1700;
-//         TIM3_DCR    = 0;
-//         TIM3_DMAR   = 0;
-//     }
-// #else
         DMA2_S1CR &= ~DMA_SxCR_EN;
         while (DMA2_S1CR & DMA_SxCR_EN)
             continue;
@@ -605,7 +524,6 @@ static void start_video_dma(tile *tp)
         // TIM8_DCR    = 0;
         // TIM8_DMAR   = 0;
     }
-// #endif /* WRONG_DMA */
 #endif /* FAKE_VIDEO */
 
     // Bit-bang the ILI9341 RAM address range.
@@ -628,54 +546,13 @@ static void start_video_dma(tile *tp)
     clear_pixbuf(tp->pix);
 #else
     // Switch the LCD_WRX pin to timer control.
-#ifdef WRONG_DMA
-    gpio_set_af(LCD_WRX_PORT, GPIO_AF2, LCD_WRX_PIN);
-#else
     gpio_set_af(LCD_WRX_PORT, GPIO_AF3, LCD_WRX_PIN);
-#endif
     gpio_mode_setup(LCD_WRX_PORT, GPIO_MODE_AF, GPIO_PUPD_PULLUP, LCD_WRX_PIN);
 
     // Start the timer.
-#ifdef WRONG_DMA
-    TIM3_CR1 |= TIM_CR1_CEN;
-#else
     TIM8_CR1 |= TIM_CR1_CEN;
 #endif
-#endif
 }
-
-#ifdef WRONG_DMA
-
-void dma1_stream2_isr(void)
-{
-    const uint32_t ERR_BITS = DMA_LISR_TEIF2 | DMA_LISR_DMEIF2 | DMA_LISR_FEIF2;
-    const uint32_t CLEAR_BITS = DMA_LISR_TCIF2 | DMA_LISR_HTIF2 | ERR_BITS;
-    uint32_t dma1_lisr = DMA1_LISR;
-    DMA1_LIFCR = dma1_lisr & CLEAR_BITS;
-    assert((dma1_lisr & ERR_BITS) == 0);
-
-    // Assume transfer done.
-    // Switch pin LCD_WRX and LCD_RDX back to GPIO mode and stop the timer.
-    assert(LCD_WRX_PORT == LCD_RDX_PORT);
-    gpio_mode_setup(LCD_WRX_PORT,
-                    GPIO_MODE_OUTPUT, GPIO_PUPD_NONE,
-                    LCD_WRX_PIN | LCD_WRX_PIN);
-    TIM3_CR1 = 0;
-
-    video_dma_busy = false;
-    for (size_t i = 0; i < PIXBUF_COUNT; i++) {
-        pixbuf *pix = &pixbufs[i];
-        if (pix->state == PS_SENDING) {
-            clear_pixbuf(pix);
-        } else if (pix->state == PS_SEND_WAIT && !video_dma_busy) {
-            pix->state = PS_SENDING;
-            video_dma_busy = true;
-            start_video_dma(pix->tp);
-        }
-    }
-}
-
-#else
 
 void dma2_stream1_isr(void)
 {
@@ -731,8 +608,6 @@ void dma2_stream1_isr(void)
 #endif
 }
 
-#endif
-
 #ifdef WRONG_TILE_LIFE
 static void send_tile(tile *tp)
 {
@@ -767,16 +642,6 @@ static void send_tile(tile *tp)
 }
 #endif
 
-#ifdef WRONG_DMA
-volatile uint32_t *tim3_cr1_addr;
-volatile uint32_t *tim3_psc_addr;
-volatile uint32_t *dma1_lisr_addr;
-volatile uint32_t *dma1_s2cr_addr;
-volatile uint32_t *dma1_s2ndtr_addr;
-volatile void    **dma1_s2par_addr;
-volatile void    **dma1_s2m0ar_addr;
-volatile uint32_t *dma1_s2fcr_addr;
-#else
 volatile uint32_t *tim8_cr1_addr;
 volatile uint32_t *tim8_cnt_addr;
 volatile uint32_t *tim8_arr_addr;
@@ -787,21 +652,10 @@ volatile uint32_t *dma2_s1ndtr_addr;
 volatile void    **dma2_s1par_addr;
 volatile void    **dma2_s1m0ar_addr;
 volatile uint32_t *dma2_s1fcr_addr;
-#endif
 volatile uint32_t *gpiob_odr_addr;
 
 static void setup_video_dma(void)
 {
-#ifdef WRONG_DMA
-    tim3_cr1_addr    = &TIM3_CR1;
-    tim3_psc_addr    = &TIM3_PSC;
-    dma1_lisr_addr   = &DMA1_LISR;
-    dma1_s2cr_addr   = &DMA1_S2CR;
-    dma1_s2ndtr_addr = &DMA1_S2NDTR;
-    dma1_s2par_addr  = &DMA1_S2PAR;
-    dma1_s2m0ar_addr = &DMA1_S2M0AR;
-    dma1_s2fcr_addr  = &DMA1_S2FCR;
-#else
     tim8_cr1_addr    = &TIM8_CR1;
     tim8_cnt_addr    = &TIM8_CNT;
     tim8_arr_addr    = &TIM8_ARR;
@@ -812,7 +666,6 @@ static void setup_video_dma(void)
     dma2_s1par_addr  = &DMA2_S1PAR;
     dma2_s1m0ar_addr = &DMA2_S1M0AR;
     dma2_s1fcr_addr  = &DMA2_S1FCR;
-#endif
     gpiob_odr_addr   = &GPIOB_ODR;
 
     // RCC
@@ -857,21 +710,12 @@ static void setup_video_dma(void)
                         LCD_DATA_PINS);
     }
         
-#ifdef WRONG_DMA
-    // TIMER
-    rcc_periph_clock_enable(RCC_TIM3);
-
-    // DMA: DMA controller 1, stream 2, channel 5.
-    rcc_periph_clock_enable(RCC_DMA1);
-    nvic_enable_irq(NVIC_DMA1_STREAM2_IRQ);
-#else
     // TIMER
     rcc_periph_clock_enable(RCC_TIM8);
 
     // DMA: DMA controller 2, stream 1, channel 7.
     rcc_periph_clock_enable(RCC_DMA2);
     nvic_enable_irq(NVIC_DMA2_STREAM1_IRQ);
-#endif
 
     // Initialize ILI9341.
     {
@@ -1015,14 +859,8 @@ static tile *alloc_tile(size_t y, size_t h)
             }
         }
     }
-    // assert(pix == pixbufs || pix == pixbufs + 1);
-    // tp->pixels = (typeof tp->pixels)pix->base;
-    // uint32_t pixes = (uint32_t)tp->pixels;
-    // assert(pixes == 0x20000000 || pixes == 0x20010000);
     tp->height = h;
     tp->y      = y;
-    // tp->pix    = pix;
-    // pix->tp    = tp;
     return tp;
 }
 #endif
