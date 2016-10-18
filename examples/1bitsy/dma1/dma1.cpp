@@ -4,6 +4,7 @@
 #define VIDEO_DMA
 #undef VIDEO_FAKE
 #undef WRONG_DMA
+#undef WRONG_TILE_LIFE
 
 // C/POSIX headers
 #include <assert.h>
@@ -38,6 +39,8 @@
 #define LED_PIN GPIO8
 #define LED_RCC_PORT RCC_GPIOA
 
+#ifdef WRONG_TILE_LIFE
+
 #define RAM_SIZE (128 << 10)    // 128 Kbytes
 #define PIXBUF_COUNT 2
 #define PIXBUF_SIZE_BYTES (RAM_SIZE / PIXBUF_COUNT)
@@ -47,6 +50,20 @@
 
 #define TILE_WIDTH SCREEN_WIDTH
 #define TILE_MAX_HEIGHT (PIXBUF_SIZE_BYTES / (TILE_WIDTH * sizeof (uint16_t)))
+
+#else
+
+#define RAM_SIZE (128 << 10)    // 128 Kbytes
+#define TILE_COUNT 2
+#define TILE_MAX_SIZE_BYTES (RAM_SIZE / TILE_COUNT)
+
+#define SCREEN_WIDTH 240
+#define SCREEN_HEIGHT 320
+
+#define TILE_WIDTH SCREEN_WIDTH
+#define TILE_MAX_HEIGHT (TILE_MAX_SIZE_BYTES / (TILE_WIDTH * sizeof (uint16_t)))
+
+#endif
 
 #define BG_COLOR 0x07ff
 
@@ -60,12 +77,14 @@ static inline uint16_t calc_bg_color(void)
     uint32_t b = frame % 3 == 2 ? 0xFF : frame & 0xFF;
     uint32_t color = (r & 0xF8)  << 8 | (g & 0xFC) << 3 | b >> 3;
     frame++;
-    // if (frame == 3 * 256)
-    //     frame = 0;
+    if (frame == 3 * 256)
+        frame = 0;
     return color;
 }
+
 #endif
 
+#ifdef WRONG_TILE_LIFE
 // Tile is virtual.  It refers to a part of the screen.
 // Pixbuf is physical.  It refers to a part of RAM.
 
@@ -100,6 +119,33 @@ struct pixbuf {
 };
 
 static pixbuf pixbufs[PIXBUF_COUNT];
+
+#else
+
+typedef enum tile_state {
+    TS_CLEARED,
+    TS_DRAWING,
+    TS_SEND_WAIT,
+    TS_SENDING,
+    TS_CLEAR_WAIT,
+    TS_CLEARING,
+} tile_state;
+
+typedef struct tile {
+    uint16_t (*pixels)[TILE_WIDTH];
+    size_t     y;
+    size_t     height;
+    tile_state state;
+} tile;
+
+static tile tiles[TILE_COUNT];
+
+static inline size_t tile_size_bytes(tile *tp)
+{
+    return tp->height * sizeof *tp->pixels;
+}
+
+#endif
 
 volatile int fps;
 
@@ -206,6 +252,8 @@ static void setup_clear_dma(void)
 
 #else /* !CLEAR_DMA */
 
+#ifdef WRONG_TILE_LIFE
+
 static void clear_pixbuf(pixbuf *pix)
 {
 #ifdef BG_DEBUG    
@@ -221,6 +269,25 @@ static void clear_pixbuf(pixbuf *pix)
         *p++ = pix_twice;
     pix->state = PS_CLEARED;
 }
+
+#else
+static void clear_tile(tile *tp)
+{
+#ifdef BG_DEBUG    
+    uint32_t color = calc_bg_color();
+    uint32_t pix_twice = color << 16 | color;
+#else
+    uint32_t pix_twice = BG_COLOR << 16 | BG_COLOR;
+#endif
+
+    uint32_t *p = (uint32_t *)tp->pixels;
+    size_t n = TILE_MAX_SIZE_BYTES / sizeof *p;
+    for (size_t i = 0; i < n; i++)
+        *p++ = pix_twice;
+    tp->state = TS_CLEARED;
+}
+
+#endif
 
 static void setup_clear_dma(void)
 {}
@@ -363,86 +430,86 @@ static void start_video_dma(tile *tp)
 #ifndef VIDEO_FAKE
     // Configure DMA.
     {
-#ifdef WRONG_DMA
-        DMA1_S2CR &= ~DMA_SxCR_EN;
-        while (DMA1_S2CR & DMA_SxCR_EN)
-            continue;
+// #ifdef WRONG_DMA
+//         DMA1_S2CR &= ~DMA_SxCR_EN;
+//         while (DMA1_S2CR & DMA_SxCR_EN)
+//             continue;
 
-#if LCD_DATA_PINS == 0x00FF
-        DMA1_S2PAR  = (uint8_t *)&GPIO_ODR(LCD_DATA_PORT);
-#elif LCD_DATA_PINS == 0xFF00
-        DMA1_S2PAR  = (uint8_t *)&GPIO_ODR(LCD_DATA_PORT) + 1;
-#else
-        #error        "data pins must be byte aligned."
-#endif
-        DMA1_S2M0AR = tp->pixels;
-        DMA1_S2NDTR = tile_size_bytes(tp);
-        DMA1_S2FCR  = (DMA_SxFCR_FEIE                 |
-                       DMA_SxFCR_DMDIS                |
-                       DMA_SxFCR_FTH_4_4_FULL);
-        DMA1_S2CR   = (DMA_SxCR_CHSEL_5               |
-                       DMA_SxCR_MBURST_INCR4          |
-                       DMA_SxCR_PBURST_SINGLE         |
-                      !DMA_SxCR_CT                    |
-                      !DMA_SxCR_DBM                   |
-                       DMA_SxCR_PL_VERY_HIGH          |
-                      !DMA_SxCR_PINCOS                |
-                       DMA_SxCR_MSIZE_32BIT           |
-                       DMA_SxCR_PSIZE_8BIT            |
-                       DMA_SxCR_MINC                  |
-                      !DMA_SxCR_PINC                  |
-                       DMA_SxCR_CIRC                  |
-                       DMA_SxCR_DIR_MEM_TO_PERIPHERAL |
-                      !DMA_SxCR_PFCTRL                |
-                       DMA_SxCR_TCIE                  |
-                      !DMA_SxCR_HTIE                  |
-                       DMA_SxCR_TEIE                  |
-                       DMA_SxCR_DMEIE                 |
-                       DMA_SxCR_EN);
-    }
+// #if LCD_DATA_PINS == 0x00FF
+//         DMA1_S2PAR  = (uint8_t *)&GPIO_ODR(LCD_DATA_PORT);
+// #elif LCD_DATA_PINS == 0xFF00
+//         DMA1_S2PAR  = (uint8_t *)&GPIO_ODR(LCD_DATA_PORT) + 1;
+// #else
+//         #error        "data pins must be byte aligned."
+// #endif
+//         DMA1_S2M0AR = tp->pixels;
+//         DMA1_S2NDTR = tile_size_bytes(tp);
+//         DMA1_S2FCR  = (DMA_SxFCR_FEIE                 |
+//                        DMA_SxFCR_DMDIS                |
+//                        DMA_SxFCR_FTH_4_4_FULL);
+//         DMA1_S2CR   = (DMA_SxCR_CHSEL_5               |
+//                        DMA_SxCR_MBURST_INCR4          |
+//                        DMA_SxCR_PBURST_SINGLE         |
+//                       !DMA_SxCR_CT                    |
+//                       !DMA_SxCR_DBM                   |
+//                        DMA_SxCR_PL_VERY_HIGH          |
+//                       !DMA_SxCR_PINCOS                |
+//                        DMA_SxCR_MSIZE_32BIT           |
+//                        DMA_SxCR_PSIZE_8BIT            |
+//                        DMA_SxCR_MINC                  |
+//                       !DMA_SxCR_PINC                  |
+//                        DMA_SxCR_CIRC                  |
+//                        DMA_SxCR_DIR_MEM_TO_PERIPHERAL |
+//                       !DMA_SxCR_PFCTRL                |
+//                        DMA_SxCR_TCIE                  |
+//                       !DMA_SxCR_HTIE                  |
+//                        DMA_SxCR_TEIE                  |
+//                        DMA_SxCR_DMEIE                 |
+//                        DMA_SxCR_EN);
+//     }
 
-    // Configure Timer.
-    {
-        TIM3_CR1    = 0;
-        TIM3_CR1    = (TIM_CR1_CKD_CK_INT             |
-                      !TIM_CR1_ARPE                   |
-                       TIM_CR1_CMS_EDGE               |
-                       TIM_CR1_DIR_UP                 |
-                      !TIM_CR1_OPM                    |
-                       TIM_CR1_URS                    |
-                      !TIM_CR1_UDIS                   |
-                      !TIM_CR1_CEN);
-        TIM3_CR2    = (
-                      !TIM_CR2_TI1S                   |
-                       TIM_CR2_MMS_RESET              |
-                       TIM_CR2_CCDS);
-        TIM3_SMCR   = 0;
-        TIM3_DIER   = (
-                      !TIM_DIER_TDE                   |
-                      !TIM_DIER_CC4DE                 |
-                      !TIM_DIER_CC3DE                 |
-                      !TIM_DIER_CC2DE                 |
-                      !TIM_DIER_CC1DE                 |
-                       TIM_DIER_UDE                   |
-                      !TIM_DIER_TIE                   |
-                      !TIM_DIER_CC4IE                 |
-                      !TIM_DIER_CC3IE                 |
-                      !TIM_DIER_CC2IE                 |
-                      !TIM_DIER_CC1IE                 |
-                      !TIM_DIER_UIE);
-        TIM3_SR     = 0;
-        TIM3_EGR    = 0;
-        TIM3_CCMR1  = 0;
-        TIM3_CCMR2  = TIM_CCMR2_OC4M_PWM2;
-        TIM3_CCER   = TIM_CCER_CC4E;
-        TIM3_CNT    = 0;
-        TIM3_PSC    = 10000;
-        TIM3_ARR    = 3400;
-        TIM3_CCR4   = 1700;
-        TIM3_DCR    = 0;
-        TIM3_DMAR   = 0;
-    }
-#else
+//     // Configure Timer.
+//     {
+//         TIM3_CR1    = 0;
+//         TIM3_CR1    = (TIM_CR1_CKD_CK_INT             |
+//                       !TIM_CR1_ARPE                   |
+//                        TIM_CR1_CMS_EDGE               |
+//                        TIM_CR1_DIR_UP                 |
+//                       !TIM_CR1_OPM                    |
+//                        TIM_CR1_URS                    |
+//                       !TIM_CR1_UDIS                   |
+//                       !TIM_CR1_CEN);
+//         TIM3_CR2    = (
+//                       !TIM_CR2_TI1S                   |
+//                        TIM_CR2_MMS_RESET              |
+//                        TIM_CR2_CCDS);
+//         TIM3_SMCR   = 0;
+//         TIM3_DIER   = (
+//                       !TIM_DIER_TDE                   |
+//                       !TIM_DIER_CC4DE                 |
+//                       !TIM_DIER_CC3DE                 |
+//                       !TIM_DIER_CC2DE                 |
+//                       !TIM_DIER_CC1DE                 |
+//                        TIM_DIER_UDE                   |
+//                       !TIM_DIER_TIE                   |
+//                       !TIM_DIER_CC4IE                 |
+//                       !TIM_DIER_CC3IE                 |
+//                       !TIM_DIER_CC2IE                 |
+//                       !TIM_DIER_CC1IE                 |
+//                       !TIM_DIER_UIE);
+//         TIM3_SR     = 0;
+//         TIM3_EGR    = 0;
+//         TIM3_CCMR1  = 0;
+//         TIM3_CCMR2  = TIM_CCMR2_OC4M_PWM2;
+//         TIM3_CCER   = TIM_CCER_CC4E;
+//         TIM3_CNT    = 0;
+//         TIM3_PSC    = 10000;
+//         TIM3_ARR    = 3400;
+//         TIM3_CCR4   = 1700;
+//         TIM3_DCR    = 0;
+//         TIM3_DMAR   = 0;
+//     }
+// #else
         DMA2_S1CR &= ~DMA_SxCR_EN;
         while (DMA2_S1CR & DMA_SxCR_EN)
             continue;
@@ -538,7 +605,7 @@ static void start_video_dma(tile *tp)
         // TIM8_DCR    = 0;
         // TIM8_DMAR   = 0;
     }
-#endif /* WRONG_DMA */
+// #endif /* WRONG_DMA */
 #endif /* FAKE_VIDEO */
 
     // Bit-bang the ILI9341 RAM address range.
@@ -636,6 +703,7 @@ void dma2_stream1_isr(void)
         DMA2_LIFCR = CLEAR_BITS;
 
         video_dma_busy = false;
+#ifdef WRONG_TILE_LIFE
         for (size_t i = 0; i < PIXBUF_COUNT; i++) {
             pixbuf *pix = &pixbufs[i];
             if (pix->state == PS_SENDING) {
@@ -648,10 +716,24 @@ void dma2_stream1_isr(void)
             }
         }
     }
+#else
+        for (size_t i = 0; i < TILE_COUNT; i++) {
+            tile *tp = &tiles[i];
+            if (tp->state == TS_SENDING) {
+                clear_tile(tp);
+            } else if (tp->state == TS_SEND_WAIT && !video_dma_busy) {
+                tp->state = TS_SENDING;
+                video_dma_busy = true;
+                start_video_dma(tp);
+            }
+        }
+    }
+#endif
 }
 
 #endif
 
+#ifdef WRONG_TILE_LIFE
 static void send_tile(tile *tp)
 {
     bool busy;
@@ -667,6 +749,23 @@ static void send_tile(tile *tp)
     if (!busy)
         start_video_dma(tp);
 }
+#else
+static void send_tile(tile *tp)
+{
+    bool busy;
+    WITH_INTERRUPTS_MASKED {
+        busy = video_dma_busy;
+        if (busy) {
+            tp->state = TS_SEND_WAIT;
+        } else {
+            video_dma_busy = true;
+            tp->state = TS_SENDING;
+        }
+    }
+    if (!busy)
+        start_video_dma(tp);
+}
+#endif
 
 #ifdef WRONG_DMA
 volatile uint32_t *tim3_cr1_addr;
@@ -836,6 +935,7 @@ static void setup_heartbeat(void)
     register_systick_handler(heartbeat);
 }
 
+#ifdef WRONG_TILE_LIFE
 static void setup_pixbufs(void)
 {
     size_t pixbuf_size = RAM_SIZE / PIXBUF_COUNT;
@@ -845,10 +945,19 @@ static void setup_pixbufs(void)
         clear_pixbuf(&pixbufs[i]);
     }
 }
+#else
+static void setup_tiles(void)
+{
+    for (size_t i = 0; i < TILE_COUNT; i++) {
+        tile *tp = tiles + i;
+        tp->pixels = (typeof tp->pixels)(0x20000000 + i * TILE_MAX_SIZE_BYTES);
+        clear_tile(tp);
+    }
+}
+#endif
 
 static void setup(void)
 {
-
     rcc_clock_setup_hse_3v3(&MY_CLOCK);
 
     // rcc_periph_clock_enable(RCC_DBGMCU);
@@ -860,9 +969,14 @@ static void setup(void)
     setup_video_dma();
     setup_clear_dma();
 
+#ifdef WRONG_TILE_LIFE
     setup_pixbufs();
+#else
+    setup_tiles();
+#endif
 }
 
+#ifdef WRONG_TILE_LIFE
 static void alloc_tile(tile *tp, size_t y, size_t h)
 {
     pixbuf *pix = NULL;
@@ -876,12 +990,42 @@ static void alloc_tile(tile *tp, size_t y, size_t h)
             }
         }
     }
+    assert(pix == pixbufs || pix == pixbufs + 1);
     tp->pixels = (typeof tp->pixels)pix->base;
+    uint32_t pixes = (uint32_t)tp->pixels;
+    assert(pixes == 0x20000000 || pixes == 0x20010000);
     tp->height = h;
     tp->y      = y;
     tp->pix    = pix;
     pix->tp    = tp;
 }
+
+#else
+
+static tile *alloc_tile(size_t y, size_t h)
+{
+    tile *tp = NULL;
+    while (!tp) {
+        for (size_t i = 0; i < TILE_COUNT && !tp; i++) {
+            WITH_INTERRUPTS_MASKED {
+                if (tiles[i].state == TS_CLEARED) {
+                    tp = &tiles[i];
+                    tp->state = TS_DRAWING;
+                }
+            }
+        }
+    }
+    // assert(pix == pixbufs || pix == pixbufs + 1);
+    // tp->pixels = (typeof tp->pixels)pix->base;
+    // uint32_t pixes = (uint32_t)tp->pixels;
+    // assert(pixes == 0x20000000 || pixes == 0x20010000);
+    tp->height = h;
+    tp->y      = y;
+    // tp->pix    = pix;
+    // pix->tp    = tp;
+    return tp;
+}
+#endif
 
 static void draw_tile(tile *tp)
 {
@@ -905,13 +1049,21 @@ static void draw_tile(tile *tp)
 static void draw_frame(void)
 {
     size_t h;
+#ifdef WRONG_TILE_LIFE
+    tile one_tile;
+#endif
 
     for (size_t y = 0; y < SCREEN_HEIGHT; y += h) {
         h = MIN(TILE_MAX_HEIGHT, SCREEN_HEIGHT - y);
-        tile one_tile;
+#ifdef WRONG_TILE_LIFE
         alloc_tile(&one_tile, y, h);
         draw_tile(&one_tile);
         send_tile(&one_tile);
+#else
+        tile *tp = alloc_tile(y, h);
+        draw_tile(tp);
+        send_tile(tp);
+#endif
     }
 }
 
