@@ -61,7 +61,6 @@ namespace agg {
                              STATIC_BUFFER_HEIGHT,
                              STATIC_BUFFER_WIDTH * STATIC_BUFFER_PIX_BYTES);
         my_ILI.begin();
-        my_ILI.setRotation(3);
         return true;
     }
 
@@ -72,7 +71,7 @@ namespace agg {
             my_ILI.writeRect(0, 0,
                              STATIC_BUFFER_WIDTH, STATIC_BUFFER_HEIGHT,
                              (const uint16_t *)static_buffer);
-            my_ILI.writeRect(0, 240/2,
+            my_ILI.writeRect(0, 320/2,
                              STATIC_BUFFER_WIDTH, STATIC_BUFFER_HEIGHT,
                              (const uint16_t *)static_buffer);
             if (!m_wait_mode)
