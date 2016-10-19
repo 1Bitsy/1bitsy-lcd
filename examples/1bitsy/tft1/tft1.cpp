@@ -81,11 +81,12 @@ static void run()
 
     for (int ci = 0; ; ci = (ci + 1) % color_count) {
         uint16_t color = colors[ci];
-        color = ILI9341_YELLOW;
+        // color = ILI9341_YELLOW;
         fill_rect(left, top, left + width, top + height, color);
         my_ILI.writeRect(0, 0, 240, 320/2, buf[0]);
         my_ILI.writeRect(0, 320/2, 240, 320/2, buf[0]);
 
+#if 1
         // erase edges
         fill_rect(left, top, left + 1, top + height, ILI9341_BLACK);
         fill_rect(left + width - 1, top,
@@ -95,6 +96,7 @@ static void run()
         fill_rect(left, top + height - 2,
                   left + width, top + height,
                   ILI9341_BLACK);
+#endif
         
         // delay_msec(20);
 
