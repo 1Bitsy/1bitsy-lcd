@@ -1,6 +1,6 @@
 // Feature switches
 #define BG_DEBUG
-#undef CLEAR_DMA
+#define CLEAR_DMA
 #define VIDEO_DMA
 
 // C/POSIX headers
@@ -9,7 +9,6 @@
 
 // libopencm3 headers
 #include <libopencm3/cm3/nvic.h>
-#include <libopencm3/stm32/dbgmcu.h>
 #include <libopencm3/stm32/dma.h>
 #include <libopencm3/stm32/gpio.h>
 #include <libopencm3/stm32/rcc.h>
@@ -115,8 +114,16 @@ static void start_clear_dma(tile *tp)
     uint32_t pix_twice = BG_COLOR << 16 | BG_COLOR;
 #endif
 
+    DMA2_S7CR &= ~DMA_SxCR_EN;  // XXX
+    while (DMA2_S7CR & DMA_SxCR_EN) // XXX
+        continue;                   // XXX
+
     for (int i = 0; i < pburst; i++)
         *p++ = pix_twice;
+
+    // for (int i = 0; i < 1000; i++) {
+    //     volatile uint32_t x = ((uint32_t *)tp->pixels)[i];
+    // }
 
     DMA2_S7CR &= ~DMA_SxCR_EN;
     while (DMA2_S7CR & DMA_SxCR_EN)
@@ -155,6 +162,11 @@ void dma2_stream7_isr(void)
     uint32_t dma2_hisr = DMA2_HISR;
     DMA2_HIFCR = dma2_hisr & CLEAR_BITS;
     assert((dma2_hisr & ERR_BITS) == 0);
+
+    assert(dma2_hisr & DMA_HISR_TCIF7);
+
+    DMA2_S7CR  = 0;
+    DMA2_HIFCR = CLEAR_BITS;
 
     clear_dma_busy = false;
     for (size_t i = 0; i < TILE_COUNT; i++) {
@@ -439,7 +451,8 @@ static void start_video_dma(tile *tp)
         TIM8_CNT    = 0;
         TIM8_PSC    = 0;
         TIM8_ARR    = 34/2;
-        TIM8_CCR3   = 17/2;
+        // TIM8_CCR3   = 17/2;
+        TIM8_CCR3   = 12;
         TIM8_BDTR   = TIM_BDTR_MOE | TIM_BDTR_OSSR;
         // TIM8_DCR    = 0;
         // TIM8_DMAR   = 0;
@@ -670,9 +683,6 @@ static void setup(void)
 {
     rcc_clock_setup_hse_3v3(&MY_CLOCK);
 
-    // rcc_periph_clock_enable(RCC_DBGMCU);
-    DBGMCU_CR |= DBGMCU_CR_STOP;
-
     setup_systick(MY_CLOCK.ahb_frequency);
     setup_heartbeat();
 
@@ -702,21 +712,25 @@ static tile *alloc_tile(size_t y, size_t h)
 
 static void draw_tile(tile *tp)
 {
+    static size_t y0 = 0;
+    static int inc = +1;
+    size_t y1 = y0 + 240;
     for (size_t y = tp->y; y < tp->y + tp->height; y++) {
-        if (y < 240) {
-            tp->pixels[y - tp->y][y] = 0x0000;
-            tp->pixels[y - tp->y][239 - y] = 0x0000;
-        }
-        int my = 319 - y;
-        if (my < 240) {
-            tp->pixels[y - tp->y][my] = 0x0000;
-            tp->pixels[y - tp->y][239 - my] = 0x0000;
+        if (y >= y0 && y < y1) {
+            tp->pixels[y - tp->y][y - y0] = 0x0000;
+            tp->pixels[y - tp->y][239 - y + y0] = 0x0000;
         }
     }
 
-    // // Debug pattern
-    // for (size_t x = 0; x < 240; x++)
-    //     tp->pixels[0][x] = (x & 1) ? 0xFFFF : 0x0000;
+    if (y0 == 0 && inc < 0) {
+        y0 = 1;
+        inc = +1;
+    }
+    y0 += inc;
+    if (y0 >= 320 - 240) {
+        y0 = 320 - 240 - 1;
+        inc = -1;
+    }
 }
 
 static void draw_frame(void)
