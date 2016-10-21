@@ -1,8 +1,11 @@
 #ifndef VIDEO_included
 #define VIDEO_included
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+
+#include "coord.h"
 
 #define SCREEN_WIDTH 240
 #define SCREEN_HEIGHT 320
@@ -24,5 +27,16 @@ extern void     send_pixtile       (pixtile *);
 extern void     video_set_bg_color (uint16_t);
 extern uint16_t video_bg_color     (void);
 // N.B.,The background color will not change immediately.
+
+static inline bool x_in_pixtile(const pixtile *tile, int x)
+{
+    (void)tile;
+    return 0 <= x && x < PIXTILE_WIDTH;
+}
+
+static inline bool y_in_pixtile(const pixtile *tile, int y)
+{
+    return (int)tile->y <= y && y < (int)(tile->y + tile->height);
+}
 
 #endif /* !VIDEO_included */
