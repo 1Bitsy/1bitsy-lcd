@@ -1,7 +1,3 @@
-//#define TWO_LINES
-//#define ONE_TRI
-//#define DEFAULT_DRAWING_MODE MODE_FILL
-
 #include <assert.h>
 #include <math.h>
 
@@ -9,6 +5,7 @@
 
 #include "coord.h"
 #include "debounce.h"
+#include "pixmaps.h"
 #include "systick.h"
 #include "util.h"
 #include "video.h"
@@ -18,42 +15,68 @@
 
 // --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  -
 
+// Verbs: draw, stroke, fill
+// Objects: point, line, path, triangle, text
+// Modifiers: aa, blended
+
+// Colors: rgb888, rgb555, gray8
+
+// --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  -
+
+typedef uint16_t rgb565;
+typedef uint32_t rgb888;        // 0x00rrggbb
+
+static inline rgb565 pack_color(rgb888 c)
+{
+    uint32_t r = (c >> 16 & 0xFF) >> 3;
+    uint32_t g = (c >>  8 & 0xFF) >> 2;
+    uint32_t b = (c >>  0 & 0xFF) >> 3;
+    return r << 11 | g << 5 | b;
+}
+
+static inline rgb888 unpack_color(rgb565 c)
+{
+    uint32_t pr5 = c >> 11 & 0xF8;
+    uint32_t pg5 = c >>  5 & 0xFC;
+    uint32_t pb5 = c >>  0 & 0xF8;
+    uint32_t pr8 = pr5 << 3 | pr5 >> 2;
+    uint32_t pg8 = pg5 << 2 | pg5 >> 4;
+    uint32_t pb8 = pb5 << 3 | pb5 >> 2;
+    return pr8 << 16 | pg8 << 8 | pb8 << 0;
+}
+
 static inline void blend_pixel_unclipped(pixtile *tile,
                                          int x, int y,
-                                         uint16_t color, coord alpha)
+                                         rgb888 color, coord alpha)
 {
-    uint16_t *p = &tile->pixels[y - tile->y][x];
-    uint16_t pix = *p;
-    uint16_t pr = pix >> 8 & 0xf8;
-    uint16_t pg = pix >> 3 & 0xfc;
-    uint16_t pb = pix << 3 & 0xf8;
-    uint16_t cr = color >> 8 & 0xf8;
-    uint16_t cg = color >> 3 & 0xfc;
-    uint16_t cb = color << 3 & 0xf8;
-
-    pr += coord_to_int((cr - pr) * alpha);
-    pg += coord_to_int((cg - pg) * alpha);
-    pb += coord_to_int((cb - pb) * alpha);
-    if (pr > 255) pr = 255;
-    if (pg > 255) pg = 255;
-    if (pb > 255) pb = 255;
-    *p = (pr << 8 & 0xf800) | (pg << 3 & 0x07e0) | (pb >> 3 & 0x001f);
+    rgb565 *p = &tile->pixels[y - tile->y][x];
+    rgb565 pix = *p;
+    uint32_t pr5 = pix >> 11 & 0x1f;
+    uint32_t pg5 = pix >>  5 & 0x3f;
+    uint32_t pb5 = pix >>  0 & 0x1f;
+    uint32_t pr8 = pr5 << 3 | pr5 >> 2;
+    uint32_t pg8 = pg5 << 2 | pg5 >> 4;
+    uint32_t pb8 = pb5 << 3 | pb5 >> 2;
+    uint32_t cr8 = color >> 16 & 0xFF;
+    uint32_t cg8 = color >>  8 & 0xFF;
+    uint32_t cb8 = color >>  0 & 0xFF;
+    
+    pr8 += coord_to_int((cr8 - pr8) * alpha);
+    pg8 += coord_to_int((cg8 - pg8) * alpha);
+    pb8 += coord_to_int((cb8 - pb8) * alpha);
+    *p = (pr8 << 8 & 0xf800) | (pg8 << 3 & 0x07e0) | (pb8 >> 3 & 0x001f);
 }
 
 static inline void blend_pixel(pixtile *tile,
                                int x, int y,
-                               uint16_t color, coord alpha)
+                               rgb888 color, coord alpha)
 {
     if (x_in_pixtile(tile, x) && y_in_pixtile(tile, y)) {
         blend_pixel_unclipped(tile, x, y, color, alpha);
     }
 }
 
-/*static*/ void draw_line(pixtile *tile,
-                      coord x0, coord y0,
-                      coord x1, coord y1,
-                      uint16_t color);
-/*static*/ void draw_line(pixtile *tile,
+static void draw_line(pixtile *tile,
                       coord x0, coord y0,
                       coord x1, coord y1,
                       uint16_t color)
@@ -142,15 +165,10 @@ static inline void blend_pixel(pixtile *tile,
     }
 }
 
-/*static*/ void draw_line_aa(pixtile *tile,
+static void draw_line_aa(pixtile *tile,
                          coord x0, coord y0,
                          coord x1, coord y1,
-                         uint16_t color,
-                         uint8_t alpha);
-/*static*/ void draw_line_aa(pixtile *tile,
-                         coord x0, coord y0,
-                         coord x1, coord y1,
-                         uint16_t color,
+                         rgb888 color,
                          uint8_t alpha)
 {
     // Cribbed directly from en.wikipedia.org/wiki/Xiaolin_Wu%27s_line_algorithm
@@ -325,12 +343,7 @@ static void fill_trapezoid(pixtile *tile,
     }
 }
 
-/*static*/ void fill_triangle(pixtile *tile,
-                          coord verts[3][2],
-                          uint16_t color);
-/*static*/ void fill_triangle(pixtile *tile,
-                          coord verts[3][2],
-                          uint16_t color)
+static void fill_triangle(pixtile *tile, coord verts[3][2], uint16_t color)
 {
     coord x0, y0, x1, y1, x2, y2;
 
@@ -391,13 +404,14 @@ static void fill_trapezoid(pixtile *tile,
 #define ROTATION_RATE 0.005      // radians/frame
 #define STAR_RADIUS   (0.44 * MIN(SCREEN_HEIGHT, SCREEN_WIDTH))
 #define FG_COLOR      0xffff
-#define BG_COLOR      0x0000
-#define CENTER_X_MIN (STAR_RADIUS - 10)
-#define CENTER_X_MAX (SCREEN_WIDTH - STAR_RADIUS + 10)
-#define CENTER_Y_MIN (STAR_RADIUS - 10)
-#define CENTER_Y_MAX (SCREEN_HEIGHT - STAR_RADIUS + 10)
+#define BG_COLOR      0x0802
+#define CENTER_X_MIN (STAR_RADIUS - 20)
+#define CENTER_X_MAX (SCREEN_WIDTH - STAR_RADIUS + 20)
+#define CENTER_Y_MIN (STAR_RADIUS - 20)
+#define CENTER_Y_MAX (SCREEN_HEIGHT - STAR_RADIUS + 20)
+#define INST_Y       (SCREEN_HEIGHT - 25)
 
-enum drawing_mode {
+typedef enum drawing_mode {
     MODE_OUTLINE,
     MODE_OUTLINE_AA,
     MODE_OUTLINE_AA_FADE,
@@ -406,59 +420,158 @@ enum drawing_mode {
     MODE_FILL_AA_FADE,
     MODE_MORE,
     DRAWING_MODE_COUNT          // must be last
-} drawing_mode
-#ifdef DEFAULT_DRAWING_MODE
-               = DEFAULT_DRAWING_MODE
-#endif
-                                     ;
+} drawing_mode;
 
-float angle = 0.0;
-coord points[5][2];
-coord in_pts[5][2];
-coord center[2];
-int star_opacity = 0;
+static drawing_mode current_mode;
+static drawing_mode new_mode;
+static uint32_t mode_start_msec;
+
+static float angle = 0.0;
+static coord points[5][2];
+static coord in_pts[5][2];
+static coord center[2];
+static int star_opacity = 0;
+
+
+static void outline_star(pixtile *tile, rgb888 color)
+{
+    rgb565 pcolor = pack_color(color);
+    for (int i = 0; i < 5; i++) {
+        int j = (i + 2) % 5;
+        coord *p0 = points[i];
+        coord *p1 = points[j];
+        draw_line(tile, p0[0], p0[1], p1[0], p1[1], pcolor);
+    }
+}
+
+static void outline_star_aa(pixtile *tile, rgb888 color, uint8_t alpha)
+{
+    for (int i = 0; i < 5; i++) {
+        int j = (i + 2) % 5;
+        coord *p0 = points[i];
+        coord *p1 = points[j];
+        draw_line_aa(tile, p0[0], p0[1], p1[0], p1[1], color, alpha);
+    }
+}
+
+static void fill_star(pixtile *tile, rgb888 color)
+{
+    rgb565 pcolor = pack_color(color);
+    for (size_t i = 0; i < 5; i++) {
+        size_t j = (i + 3) % 5;
+        size_t k = (i + 4) % 5;
+        coord tri_pts[3][2] = {
+            { points[i][0], points[i][1] },
+            { in_pts[j][0], in_pts[j][1] },
+            { in_pts[k][0], in_pts[k][1] },
+        };
+        fill_triangle(tile, tri_pts, pcolor);
+    }
+}
+
+typedef struct mode_settings mode_settings;
+typedef void draw_op(pixtile *, const mode_settings *);
+
+typedef enum text_anim {
+    TA_ALL,
+    TA_DELAY,
+    TA_FADE,
+    TA_RAINBOW,
+} text_anim;
+
+typedef struct mode_settings {
+    rgb888   bg_color;
+    rgb888   fg_color;
+    rgb888   tx_color;
+    draw_op  *op;
+    const text_pixmap *instructions;
+    text_anim inst_anim;
+} mode_settings;
+
+static void draw_outline(pixtile *tile, const mode_settings *mode)
+{
+    outline_star(tile, mode->fg_color);
+}
+
+static void draw_outline_aa(pixtile *tile, const mode_settings *mode)
+{
+    outline_star_aa(tile, mode->fg_color, 0xFF);
+}
+
+static void draw_outline_fa(pixtile *tile, const mode_settings *mode)
+{
+    int opacity = star_opacity * star_opacity / 255;
+    outline_star_aa(tile, mode->fg_color, opacity);
+}
+
+static void draw_filled(pixtile *tile, const mode_settings *mode)
+{
+    fill_star(tile, mode->fg_color);
+}
+
+static void draw_filled_aa(pixtile *tile, const mode_settings *mode)
+{
+    (void)tile;
+    (void)mode;
+    // XXX write me
+}
+
+static void draw_filled_fa(pixtile *tile, const mode_settings *mode)
+{
+    (void)tile;
+    (void)mode;
+    // XXX write me
+}
+
+static void draw_everything(pixtile *tile, const mode_settings *mode)
+{
+    (void)tile;
+    (void)mode;
+    // XXX write me
+}
+
+static const mode_settings demo_modes[] = {
+//    bg_color  fg_color  tx_color  op               inst      inst_anim
+    { 0x000000, 0xff0000, 0xffff00, draw_outline,    &pb2aa,   TA_DELAY   },
+    { 0x000018, 0x00ff00, 0xff00ff, draw_outline_aa, &pb2fade, TA_DELAY   },
+    { 0x202020, 0x0000ff, 0x00ffff, draw_outline_fa, &pb2fill, TA_FADE    },
+    { 0x080018, 0xffff00, 0x00ff00, draw_filled,     &pb2aa,   TA_FADE    },
+    { 0x002000, 0xff00ff, 0xffff00, draw_filled_aa,  &pb2fade, TA_FADE    },
+    { 0x000000, 0xffff00, 0x0000ff, draw_filled_fa,  &pb4more, TA_FADE    },
+    { 0xffffff, 0x110000, 0x223322, draw_everything, &pb4less, TA_RAINBOW },
+};
+static const size_t mode_count = (&demo_modes)[1] - demo_modes;
 
 static void animate(void)
 {
-#ifdef TWO_LINES
-    static coord tran;
-
-    tran += 3;
-    if (tran > int_to_coord(100))
-        tran = 0;
-
-    points[0][0] = int_to_coord(50);
-    points[0][1] = tran;
-    points[1][0] = int_to_coord(190);
-    points[1][1] = int_to_coord(20) + tran;
-    points[2][0] = tran;
-    points[2][1] = int_to_coord(50);
-    points[3][0] = int_to_coord(20) + tran;
-    points[3][1] = int_to_coord(190);
-#else
-
     // // Update drawing mode.
     // static uint32_t next_time = 2000;
     // if (system_millis >= next_time) {
-    //     drawing_mode = (drawing_mode + 1) % DRAWING_MODE_COUNT;
-    //     drawing_mode = MODE_FILL;
+    //     new_mode = (drawing_mode + 1) % DRAWING_MODE_COUNT;
     //     next_time += 2000;
     // }
 
+    if (new_mode != current_mode) {
+        current_mode = new_mode;
+        video_set_bg_color(pack_color(demo_modes[current_mode].bg_color), true);
+        star_opacity = 0xFF;
+        mode_start_msec = system_millis;
+    }
+    
     // Update rotation angle.
     angle += ROTATION_RATE;
     if (angle >= 2 * M_PI)
         angle -= 2 * M_PI;
 
     // Update opacity.
-    static int op_inc = +1;
+    static int op_inc = +5;
     star_opacity += op_inc;
     if (star_opacity >= 0xFF) {
-        star_opacity = 0xFF;
-        op_inc = -1;
+        star_opacity = 0x1FE - star_opacity;
+        op_inc = -op_inc;
     } else if (star_opacity <= 0) {
-        star_opacity = 0;
-        op_inc = +1;
+        star_opacity *= -1;
+        op_inc = -op_inc;
         
     }
 
@@ -504,74 +617,153 @@ static void animate(void)
         in_pts[i][0] = float_to_coord(x);
         in_pts[i][1] = float_to_coord(y);
     }
-#endif
+
+    // Recalculate extra star points.
+    // XXX write me
 }
 
-static void outline_star(pixtile *tile)
+#define INST_DELAY_MSEC 2500
+#define INST_FADE_FREQ 0.625f
+
+static inline coord inst_alpha(const mode_settings *mode)
 {
-    for (int i = 0; i < 5; i++) {
-        int j = (i + 2) % 5;
-        coord *p0 = points[i];
-        coord *p1 = points[j];
-        draw_line(tile, p0[0], p0[1], p1[0], p1[1], 0xf800);
+    switch (mode->inst_anim) {
+
+        case TA_ALL:
+            return int_to_coord(1);
+
+        case TA_DELAY:
+            if (system_millis < mode_start_msec + INST_DELAY_MSEC)
+                return int_to_coord(0);
+            else
+                return int_to_coord(1);
+
+        case TA_FADE:
+            {
+                float t = (system_millis - mode_start_msec) * 0.001f;
+                t *= 2 * INST_FADE_FREQ;
+                float i = (int)t;
+                float f = t - i;
+                if ((int)t & 1)
+                    f = 1.0f - f;
+                return float_to_coord(f * f);
+            }
+
+        case TA_RAINBOW:
+            return int_to_coord(1);
+
+    default:
+        assert(0);
     }
 }
 
-static void outline_star_aa(pixtile *tile, uint16_t color, uint8_t alpha)
+static inline rgb888 inst_color(const mode_settings *mode)
 {
-    for (int i = 0; i < 5; i++) {
-        int j = (i + 2) % 5;
-        coord *p0 = points[i];
-        coord *p1 = points[j];
-        draw_line_aa(tile, p0[0], p0[1], p1[0], p1[1], color, alpha);
+    switch (mode->inst_anim) {
+
+        case TA_ALL:
+            return mode->tx_color;
+
+        case TA_DELAY:
+            return mode->tx_color;
+
+        case TA_FADE:
+            return mode->tx_color;
+
+        case TA_RAINBOW:
+            {
+                uint32_t msec = system_millis - mode_start_msec;
+                uint8_t r, b, g;
+                uint8_t up = msec & 0xFF;
+                uint8_t dn = 0xff - up;
+                switch ((msec >> 8) % 6) {
+
+                    case 0:
+                        r = 255;
+                        g = up;
+                        b = 0;
+                        break;
+
+                    case 1:
+                        r = dn;
+                        g = 255;
+                        b = 0;
+                        break;
+
+                    case 2:
+                        r = 0;
+                        g = 255;
+                        b = up;
+                        break;
+
+                    case 3:
+                        r = 0;
+                        g = dn;
+                        b = 255;
+                        break;
+
+                    case 4:
+                        r = up;
+                        g = 0;
+                        b = 255;
+                        break;
+
+                    case 5:
+                        r = 255;
+                        g = 0;
+                        b = dn;
+                        break;
+                }
+                return r << 16 | g << 8 | b << 0;
+            }
+
+    default:
+        assert(0);
     }
 }
 
-static void fill_star(pixtile *tile)
+static void draw_instructions(pixtile *tile, const mode_settings *mode)
 {
-    // fill_triangle(tile, points + 0, 0x0ffe0);
-    // fill_triangle(tile, points + 1, 0x07ff);
-    // fill_triangle(tile, points + 2, 0x0f87f);
-    for (size_t i = 0; i < 5; i++) {
-        size_t j = (i + 3) % 5;
-        size_t k = (i + 4) % 5;
-        coord tri_pts[3][2] = {
-            { points[i][0], points[i][1] },
-            { in_pts[j][0], in_pts[j][1] },
-            { in_pts[k][0], in_pts[k][1] },
-        };
-        fill_triangle(tile, tri_pts, 0xffe0);
+    int y0 = INST_Y;
+    int y1 = y0 + TEXT_PIXMAP_HEIGHT;
+    if (y0 > (int)(tile->y + tile->height) || y1 < (int)tile->y)
+        return;
+
+    coord opacity = inst_alpha(mode);
+    rgb888 color = inst_color(mode);
+    const text_pixmap *pixmap = mode->instructions;
+
+    int x0 = (SCREEN_WIDTH - TEXT_PIXMAP_WIDTH) / 2;
+    int x1 = (SCREEN_WIDTH + TEXT_PIXMAP_WIDTH) / 2;
+    for (int y = y0; y < y1; y++) {
+        for (int x = x0; x < x1; x++) {
+            coord alpha = (*pixmap)[y - y0][x - x0];
+            alpha = coord_product(alpha, opacity);
+            blend_pixel_unclipped(tile, x, y, color, alpha);
+        }
     }
 }
 
 static void draw_tile(pixtile *tile)
 {
-#ifdef TWO_LINES
-    coord *p0 = points[0];
-    coord *p1 = points[1];
-    coord *p2 = points[2];
-    coord *p3 = points[3];
-    draw_line_aa(tile, p0[0], p0[1], p1[0], p1[1], 0xF800, 0x44);
-    draw_line_aa(tile, p2[0], p2[1], p3[0], p3[1], 0x07E0, 0x44);
-#elif defined(ONE_TRI)
-    fill_triangle(tile, points, 0x07FF);
-#else
+#if 0
+    draw_instructions(tile, &pb2aa, 0x0000FF);
     switch (drawing_mode) {
 
     case MODE_OUTLINE:
-        outline_star(tile);
+        outline_star(tile, 0xFF0000);
         break;
 
     case MODE_OUTLINE_AA:
-        outline_star_aa(tile, 0x07E0, 0xFF);
+        outline_star_aa(tile, 0x00ff00, 0xFF);
         break;
 
     case MODE_OUTLINE_AA_FADE:
-        outline_star_aa(tile, 0x001F, star_opacity);
+        outline_star_aa(tile, 0x0000ff, star_opacity);
         break;
 
     case MODE_FILL:
-        fill_star(tile);
+        fill_star(tile, 0xFFFF00);
         break;
 
     case MODE_FILL_AA:
@@ -586,6 +778,11 @@ static void draw_tile(pixtile *tile)
     default:
         break;
     }
+#else
+    const mode_settings *mode = &demo_modes[current_mode];
+    // draw_instructions(tile, mode->instructions, mode->tx_color);
+    draw_instructions(tile, mode);
+    (*mode->op)(tile, mode);
 #endif
 }
 
@@ -622,8 +819,7 @@ static void poll_button(uint32_t millis)
     (void)millis;
     if (debounce_update(&mode_button)) {
         if (debounce_is_falling_edge(&mode_button)) {
-            drawing_mode = (drawing_mode + 1) % DRAWING_MODE_COUNT;
-            star_opacity = 0xFF;
+            new_mode = (current_mode + 1) % DRAWING_MODE_COUNT;
         }
     }
 }
@@ -635,10 +831,6 @@ static void setup_button(void)
         .gp_pin    = GPIO1,
         .gp_mode   = GPIO_MODE_INPUT,
         .gp_pupd   = GPIO_PUPD_PULLUP,
-        // .gp_af     = GPIO_AF0,
-        // .gp_ospeed = GPIO_OSPEED_DEFAULT,
-        // .gp_otype  = GPIO_OTYPE_DEFAULT,
-        // .gp_level  = 0,
     };
     const uint32_t BUTTON_SETTLE_MSEC = 20;
 
@@ -653,7 +845,7 @@ static void setup(void)
     setup_systick(MY_CLOCK.ahb_frequency);
     // setup_heartbeat();
 
-    video_set_bg_color(BG_COLOR);
+    video_set_bg_color(BG_COLOR, false);
     setup_video();
 
     setup_button();

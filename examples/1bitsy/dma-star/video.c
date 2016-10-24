@@ -40,7 +40,7 @@ typedef enum pixtile_state {
 } pixtile_state;
 
 static pixtile pixtiles[PIXTILE_COUNT];
-static uint16_t bg_color = 0x0000;
+static volatile uint16_t bg_color = 0x0000;
 
 static inline size_t pixtile_size_bytes(pixtile *tile)
 {
@@ -337,6 +337,14 @@ static void start_video_dma(pixtile *tile)
         DMA2_S1CR &= ~DMA_SxCR_EN;
         while (DMA2_S1CR & DMA_SxCR_EN)
             continue;
+        // DMA2_S1CR &= ~DMA_SxCR_EN;
+        // for (int i = 0; i < 100000; i++) {
+        //     if (!(DMA2_S1CR & DMA_SxCR_EN))
+        //         break;
+        //     dma_stream_reset(DMA2, DMA_STREAM1);
+        //     // TIM8_EGR = TIM_EGR_UG;
+        //     // TIM8_CR1   = 0;
+        // }
 
         void *par;
         #if LCD_DATA_PINS == 0x00FF
@@ -454,12 +462,16 @@ static void start_video_dma(pixtile *tile)
     TIM8_CR1 |= TIM_CR1_CEN;
 }
 
+volatile uint32_t dma2_lisr_save;
+
 void dma2_stream1_isr(void)
 {
     const uint32_t ERR_BITS = DMA_LISR_TEIF1 | DMA_LISR_DMEIF1 | DMA_LISR_FEIF1;
     const uint32_t CLEAR_BITS = DMA_LISR_TCIF1 | DMA_LISR_HTIF1 | ERR_BITS;
     uint32_t dma2_lisr = DMA2_LISR;
     DMA2_LIFCR = dma2_lisr & CLEAR_BITS;
+    if (dma2_lisr & ERR_BITS)
+        dma2_lisr_save = dma2_lisr;
     assert((dma2_lisr & ERR_BITS) == 0);
 
     if (dma2_lisr & DMA_LISR_TCIF1) {
@@ -475,8 +487,15 @@ void dma2_stream1_isr(void)
         gpio_mode_setup(LCD_RDX_PORT,
                         GPIO_MODE_OUTPUT, GPIO_PUPD_NONE,
                         LCD_RDX_PIN);
+
+        // DMA2_S1CR &= ~DMA_SxCR_EN;
+        // while (DMA2_S1CR & DMA_SxCR_EN)
+        //     continue;
+
         TIM8_CR1   = 0;
         DMA2_S1CR  = 0;
+        while (DMA2_S1CR & DMA_SxCR_EN)
+            continue;
         DMA2_LIFCR = CLEAR_BITS;
 
         video_dma_busy = false;
@@ -558,9 +577,26 @@ void setup_video(void)
     setup_pixtiles();
 }
 
-void video_set_bg_color(uint16_t color)
+void video_set_bg_color(uint16_t color, bool immediate)
 {
-    bg_color = color;
+    if (immediate) {
+        bool needs_clearing[PIXTILE_COUNT];
+        WITH_INTERRUPTS_MASKED {
+            bg_color = color;
+            for (size_t i = 0; i < PIXTILE_COUNT; i++) {
+                if (pixtiles[i].state == TS_CLEARED) {
+                    pixtiles[i].state = TS_DRAWING;
+                    needs_clearing[i] = true;
+                } else
+                    needs_clearing[i] = false;
+            }
+        }
+        for (size_t i = 0; i < PIXTILE_COUNT; i++)
+            if (needs_clearing[i])
+                clear_pixtile(&pixtiles[i]);
+    } else {
+        bg_color = color;
+    }
 }
 
 uint16_t video_bg_color(void)
@@ -570,6 +606,7 @@ uint16_t video_bg_color(void)
 
 pixtile *alloc_pixtile(size_t y, size_t h)
 {
+#if 0
     pixtile *tile = NULL;
     while (!tile) {
         for (size_t i = 0; i < PIXTILE_COUNT && !tile; i++) {
@@ -584,6 +621,23 @@ pixtile *alloc_pixtile(size_t y, size_t h)
     tile->height = h;
     tile->y      = y;
     return tile;
+#else
+    pixtile *tile = NULL;
+    while (!tile) {
+        WITH_INTERRUPTS_MASKED {
+            for (size_t i = 0; i < PIXTILE_COUNT && !tile; i++) {
+                if (pixtiles[i].state == TS_CLEARED) {
+                    tile = &pixtiles[i];
+                    tile->state = TS_DRAWING;
+                    break;
+                }
+            }            
+        }
+    }
+    tile->height = h;
+    tile->y      = y;
+    return tile;
+#endif
 }
 
 void send_pixtile(pixtile *tile)

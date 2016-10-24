@@ -28,3 +28,8 @@ LDSCRIPT := stm32f4-1bitsy.ld
 include ../Makefile.include
 CPPFLAGS += -I.
 CFLAGS   := $(filter-out -O%, $(CFLAGS)) -O0 -Werror
+
+dma-star.o: pixmaps.h
+
+pixmaps.h: extract-pixmaps.py pixmaps/text-snips.png
+	python3 extract-pixmaps.py > $@

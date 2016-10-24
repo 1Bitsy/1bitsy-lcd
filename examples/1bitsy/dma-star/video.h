@@ -24,9 +24,9 @@ extern void     setup_video        (void);
 extern pixtile *alloc_pixtile      (size_t y, size_t h);
 extern void     send_pixtile       (pixtile *);
 
-extern void     video_set_bg_color (uint16_t);
+extern void     video_set_bg_color (uint16_t color, bool immediate);
+// if immediate, cleared tiles will be re-cleared in new color.
 extern uint16_t video_bg_color     (void);
-// N.B.,The background color will not change immediately.
 
 static inline bool x_in_pixtile(const pixtile *tile, int x)
 {
