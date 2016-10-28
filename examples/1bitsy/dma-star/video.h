@@ -14,10 +14,9 @@
 #define PIXTILE_MAX_HEIGHT 136
 
 typedef struct pixtile {
-    uint16_t    (*pixels)[PIXTILE_WIDTH];
-    size_t        y;
-    size_t        height;
-    int           state;
+    uint16_t (*pixels)[PIXTILE_WIDTH];
+    size_t     y;
+    size_t     height;
 } pixtile;
 
 extern void     setup_video        (void);

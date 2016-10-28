@@ -17,7 +17,7 @@
 
 // Verbs: draw, stroke, fill
 // Objects: point, line, path, triangle, text
-// Modifiers: aa, blended
+// Modifiers: aa, blended, noclip
 
 // Colors: rgb888, rgb555, gray8
 
@@ -730,6 +730,8 @@ static void draw_instructions(pixtile *tile, const mode_settings *mode)
         return;
 
     coord opacity = inst_alpha(mode);
+    if (!opacity)
+        return;
     rgb888 color = inst_color(mode);
     const text_pixmap *pixmap = mode->instructions;
 
@@ -746,44 +748,9 @@ static void draw_instructions(pixtile *tile, const mode_settings *mode)
 
 static void draw_tile(pixtile *tile)
 {
-#if 0
-    draw_instructions(tile, &pb2aa, 0x0000FF);
-    switch (drawing_mode) {
-
-    case MODE_OUTLINE:
-        outline_star(tile, 0xFF0000);
-        break;
-
-    case MODE_OUTLINE_AA:
-        outline_star_aa(tile, 0x00ff00, 0xFF);
-        break;
-
-    case MODE_OUTLINE_AA_FADE:
-        outline_star_aa(tile, 0x0000ff, star_opacity);
-        break;
-
-    case MODE_FILL:
-        fill_star(tile, 0xFFFF00);
-        break;
-
-    case MODE_FILL_AA:
-        break;
-
-    case MODE_FILL_AA_FADE:
-        break;
-
-    case MODE_MORE:
-        break;
-
-    default:
-        break;
-    }
-#else
     const mode_settings *mode = &demo_modes[current_mode];
-    // draw_instructions(tile, mode->instructions, mode->tx_color);
     draw_instructions(tile, mode);
     (*mode->op)(tile, mode);
-#endif
 }
 
 static void draw_frame(void)

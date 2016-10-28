@@ -39,7 +39,12 @@ typedef enum pixtile_state {
     TS_CLEARING,
 } pixtile_state;
 
-static pixtile pixtiles[PIXTILE_COUNT];
+typedef struct pixtile_impl {
+    pixtile                tile; // must be first.
+    volatile pixtile_state state;
+} pixtile_impl;
+
+static pixtile_impl pixtiles[PIXTILE_COUNT];
 static volatile uint16_t bg_color = 0x0000;
 
 static inline size_t pixtile_size_bytes(pixtile *tile)
@@ -298,37 +303,38 @@ void dma2_stream7_isr(void)
 
     clear_dma_busy = false;
     for (size_t i = 0; i < PIXTILE_COUNT; i++) {
-        pixtile *tile = &pixtiles[i];
-        if (tile->state == TS_CLEARING) {
-            tile->state = TS_CLEARED;
-        } else if (tile->state == TS_CLEAR_WAIT && !clear_dma_busy) {
-            tile->state = TS_CLEARING;
+        pixtile_impl *impl = &pixtiles[i];
+        if (impl->state == TS_CLEARING) {
+            impl->state = TS_CLEARED;
+        } else if (impl->state == TS_CLEAR_WAIT && !clear_dma_busy) {
+            impl->state = TS_CLEARING;
             clear_dma_busy = true;
-            start_clear_dma(tile);
+            start_clear_dma(&impl->tile);
         }
     }
 }
 
 static void clear_pixtile(pixtile *tile)
 {
-    bool busy;
+    pixtile_impl *impl = (pixtile_impl *)tile;
+    bool busy = false;
     WITH_INTERRUPTS_MASKED {
         busy = clear_dma_busy;
         if (busy) {
-            tile->state = TS_CLEAR_WAIT;
+            impl->state = TS_CLEAR_WAIT;
         } else {
             clear_dma_busy = true;
-            tile->state = TS_CLEARING;
+            impl->state = TS_CLEARING;
         }
     }
     if (!busy)
-        start_clear_dma(tile);
+        start_clear_dma(&impl->tile);
 }
 
 
 // --  Video DMA   --  --  --  --  --  --  --  --  --  --  --  --  --  -
 
-static bool video_dma_busy;
+static volatile bool video_dma_busy;
 
 static void start_video_dma(pixtile *tile)
 {
@@ -337,14 +343,6 @@ static void start_video_dma(pixtile *tile)
         DMA2_S1CR &= ~DMA_SxCR_EN;
         while (DMA2_S1CR & DMA_SxCR_EN)
             continue;
-        // DMA2_S1CR &= ~DMA_SxCR_EN;
-        // for (int i = 0; i < 100000; i++) {
-        //     if (!(DMA2_S1CR & DMA_SxCR_EN))
-        //         break;
-        //     dma_stream_reset(DMA2, DMA_STREAM1);
-        //     // TIM8_EGR = TIM_EGR_UG;
-        //     // TIM8_CR1   = 0;
-        // }
 
         void *par;
         #if LCD_DATA_PINS == 0x00FF
@@ -390,7 +388,7 @@ static void start_video_dma(pixtile *tile)
                        TIM_CR1_CMS_EDGE               |
                        TIM_CR1_DIR_UP                 |
                       !TIM_CR1_OPM                    |
-                     ! TIM_CR1_URS                    | // XXX
+                      !TIM_CR1_URS                    |
                       !TIM_CR1_UDIS                   |
                       !TIM_CR1_CEN);
         TIM8_CR2    = (
@@ -416,7 +414,6 @@ static void start_video_dma(pixtile *tile)
         TIM8_CCMR1  = 0;
         TIM8_CCMR2  = (TIM_CCMR2_CC3S_OUT             |
                        TIM_CCMR2_OC3M_PWM2);
-        TIM8_CCER   = TIM_CCER_CC3NE; // XXX
         TIM8_CCER   = (
                       !TIM_CCER_CC4P                  |
                       !TIM_CCER_CC4E                  |
@@ -434,8 +431,9 @@ static void start_video_dma(pixtile *tile)
                       !TIM_CCER_CC1E);
         TIM8_CNT    = 0;
         TIM8_PSC    = 0;
-        TIM8_ARR    = 34/2;
+        // TIM8_ARR    = 34/2;
         // TIM8_CCR3   = 17/2;
+        TIM8_ARR    = 17;
         TIM8_CCR3   = 12;
         TIM8_BDTR   = TIM_BDTR_MOE | TIM_BDTR_OSSR;
         // TIM8_DCR    = 0;
@@ -463,6 +461,8 @@ static void start_video_dma(pixtile *tile)
 }
 
 volatile uint32_t dma2_lisr_save;
+volatile uint32_t success_count;
+volatile uint32_t error_count;
 
 void dma2_stream1_isr(void)
 {
@@ -470,9 +470,13 @@ void dma2_stream1_isr(void)
     const uint32_t CLEAR_BITS = DMA_LISR_TCIF1 | DMA_LISR_HTIF1 | ERR_BITS;
     uint32_t dma2_lisr = DMA2_LISR;
     DMA2_LIFCR = dma2_lisr & CLEAR_BITS;
-    if (dma2_lisr & ERR_BITS)
+    if (dma2_lisr & ERR_BITS) {
         dma2_lisr_save = dma2_lisr;
-    assert((dma2_lisr & ERR_BITS) == 0);
+        error_count++;
+    } else {
+        success_count++;
+    }
+    // assert((dma2_lisr & ERR_BITS) == 0);
 
     if (dma2_lisr & DMA_LISR_TCIF1) {
         // Transfer done.
@@ -500,13 +504,13 @@ void dma2_stream1_isr(void)
 
         video_dma_busy = false;
         for (size_t i = 0; i < PIXTILE_COUNT; i++) {
-            pixtile *tile = &pixtiles[i];
-            if (tile->state == TS_SENDING) {
-                clear_pixtile(tile);
-            } else if (tile->state == TS_SEND_WAIT && !video_dma_busy) {
-                tile->state = TS_SENDING;
+            pixtile_impl *impl = &pixtiles[i];
+            if (impl->state == TS_SENDING) {
+                clear_pixtile(&impl->tile);
+            } else if (impl->state == TS_SEND_WAIT && !video_dma_busy) {
+                impl->state = TS_SENDING;
                 video_dma_busy = true;
-                start_video_dma(tile);
+                start_video_dma(&impl->tile);
             }
         }
     }
@@ -562,10 +566,10 @@ static void setup_video_dma(void)
 static void setup_pixtiles(void)
 {
     for (size_t i = 0; i < PIXTILE_COUNT; i++) {
-        pixtile *tile = pixtiles + i;
+        pixtile_impl *impl = pixtiles + i;
         uintptr_t addr = RAM_BASE + i * PIXTILE_MAX_SIZE_BYTES;
-        tile->pixels = (uint16_t(*)[240])addr;
-        clear_pixtile(tile);
+        impl->tile.pixels = (uint16_t(*)[240])addr;
+        clear_pixtile(&impl->tile);
     }
 }
 
@@ -580,7 +584,7 @@ void setup_video(void)
 void video_set_bg_color(uint16_t color, bool immediate)
 {
     if (immediate) {
-        bool needs_clearing[PIXTILE_COUNT];
+        bool needs_clearing[PIXTILE_COUNT] = { false, false };
         WITH_INTERRUPTS_MASKED {
             bg_color = color;
             for (size_t i = 0; i < PIXTILE_COUNT; i++) {
@@ -593,7 +597,7 @@ void video_set_bg_color(uint16_t color, bool immediate)
         }
         for (size_t i = 0; i < PIXTILE_COUNT; i++)
             if (needs_clearing[i])
-                clear_pixtile(&pixtiles[i]);
+                clear_pixtile(&pixtiles[i].tile);
     } else {
         bg_color = color;
     }
@@ -606,54 +610,37 @@ uint16_t video_bg_color(void)
 
 pixtile *alloc_pixtile(size_t y, size_t h)
 {
-#if 0
-    pixtile *tile = NULL;
-    while (!tile) {
-        for (size_t i = 0; i < PIXTILE_COUNT && !tile; i++) {
+    pixtile_impl *impl = NULL;
+    while (!impl) {
+        for (size_t i = 0; i < PIXTILE_COUNT && !impl; i++) {
             WITH_INTERRUPTS_MASKED {
                 if (pixtiles[i].state == TS_CLEARED) {
-                    tile = &pixtiles[i];
-                    tile->state = TS_DRAWING;
+                    impl = &pixtiles[i];
+                    impl->state = TS_DRAWING;
                 }
             }
         }
     }
-    tile->height = h;
-    tile->y      = y;
-    return tile;
-#else
-    pixtile *tile = NULL;
-    while (!tile) {
-        WITH_INTERRUPTS_MASKED {
-            for (size_t i = 0; i < PIXTILE_COUNT && !tile; i++) {
-                if (pixtiles[i].state == TS_CLEARED) {
-                    tile = &pixtiles[i];
-                    tile->state = TS_DRAWING;
-                    break;
-                }
-            }            
-        }
-    }
-    tile->height = h;
-    tile->y      = y;
-    return tile;
-#endif
+    impl->tile.height = h;
+    impl->tile.y      = y;
+    return &impl->tile;
 }
 
 void send_pixtile(pixtile *tile)
 {
-    bool busy;
+    pixtile_impl *impl = (pixtile_impl *)tile;
+    bool busy = false;
     WITH_INTERRUPTS_MASKED {
         busy = video_dma_busy;
         if (busy) {
-            tile->state = TS_SEND_WAIT;
+            impl->state = TS_SEND_WAIT;
         } else {
             video_dma_busy = true;
-            tile->state = TS_SENDING;
+            impl->state = TS_SENDING;
         }
     }
     if (!busy)
-        start_video_dma(tile);
+        start_video_dma(&impl->tile);
 }
 
 // --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  -
