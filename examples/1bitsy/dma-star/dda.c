@@ -67,21 +67,18 @@ void plot3(int x, float y, float err)
 void dda_print6(float x0, float y0, float x1, float y1)
 {
     float m = (y1 - y0) / (x1 - x0);
-    float am = fabsf(m);
     float b = y0 - m * x0;
     float tri = 0.5 / m;
 
     int ix = floorf(x0);
     int iy = floorf(y0);
-    float y, ny;
+    float y = m * ix + b;
+    float ny;
     while (ix < x1) {
         bool s2 = true;
+        ny = m * (ix + 1) + b;
         if (m >= 0) {
-            while (1) {
-                y = m * ix + b;
-                ny = m * (ix + 1) + b;
-                if (ny <= iy + 1)
-                    break;
+            while (ny > iy + 1) {
                 float cover;
                 if (s2)
                     cover = tri * (y - iy - 1) * (y - iy - 1) + 10;
@@ -98,12 +95,7 @@ void dda_print6(float x0, float y0, float x1, float y1)
                 cover = FRACF(m * (ix + 0.5) + b) + 40;
             plot3(ix, iy, cover);
         } else {
-            while (1) {
-                y = m * ix + b;
-                ny = m * (ix + 1) + b;
-                // printf("(%d, %d): y = %g, ny = %g\n", ix, iy, y, ny);
-                if (ny >= iy)
-                    break;
+            while (ny < iy) {
                 float cover;
                 if (s2)
                     // N.B., tri < 0
@@ -111,7 +103,6 @@ void dda_print6(float x0, float y0, float x1, float y1)
                 else
                     cover = 1 - FRACF((iy + 0.5 - b) / m) + 60;
                 plot3(ix, iy, cover);
-                // putchar('\n');
                 iy--;
                 s2 = false;
             }
@@ -121,10 +112,9 @@ void dda_print6(float x0, float y0, float x1, float y1)
             else
                 cover = 1 - FRACF(m * (ix + 0.5) + b) + 80;
             plot3(ix, iy, cover);
-            // putchar('\n');
         }
-        // plot(ix, iy + 1);
         ix++;
+        y = ny;
     }
 }
 
