@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <math.h>
+#include <string.h>
 
 #include <libopencm3/stm32/rcc.h>
 
@@ -45,10 +46,13 @@ static inline rgb888 unpack_color(rgb565 c)
     return pr8 << 16 | pg8 << 8 | pb8 << 0;
 }
 
+// XXX fast path when alpha == 0 or alpha == opaque.
 static inline void blend_pixel_unclipped(pixtile *tile,
                                          int x, int y,
                                          rgb888 color, coord alpha)
 {
+    assert(0 <= alpha && alpha <= 256);
+
     rgb565 *p = &tile->pixels[y - tile->y][x];
     rgb565 pix = *p;
     uint32_t pr5 = pix >> 11 & 0x1f;
@@ -343,6 +347,507 @@ static void fill_trapezoid(pixtile *tile,
     }
 }
 
+#if 0
+static void fill_trapezoid_aa_unclipped(pixtile *tile,
+                                        float xl0, float xr0, float y0,
+                                        float xl1, float xr1, float y1,
+                                        rgb888 color)
+{
+    // verify points ordered left-to-right, top-to-bottom and clipped.
+    assert(0 <= xl0 && xl0 <= xr0 && xr0 <= PIXTILE_WIDTH);
+    assert(0 <= xl1 && xl1 <= xr1 && xr1 <= PIXTILE_WIDTH);
+    assert(tile->y <= y0 && y0 <= y1 && y1 <= tile->y + tile->height);
+
+    // rgb565 c565 = pack_color(color);
+    // Axes are inverted: x = m * y + b
+    float ml = (xl1 - xl0) / (y1 - y0);
+    float mr = (xr1 - xr0) / (y1 - y0);
+    float bl = xl0 - ml * y0;
+    float br = xr0 - mr * y0;
+    float tril = 0.5 / ml;      // ratio of triangle area to width
+    float trir = 0.5 / mr;
+
+    int iy = FLOOR(y0);
+    int ixl = FLOOR(xl0);
+    int ixr = FLOOR(xr0);
+    float xl = ml * iy + bl;
+    float xr = mr * iy + br;
+    float nxl, nxr;
+    while (iy < y1) {
+        bool s2 = true;
+        nxl = ml * (iy + 1) + bl;
+        nxr = mr * (iy + 1) + br;
+        if (ml >= 0) {
+            while (nxl > ixl + 1 && ixl < xl1) {
+                float cover;
+                if (s2) {
+                    float w = xl - ixl - 1;
+                    cover = tril * w * w;
+                } else {
+                    cover = FRAC((ixl + 0.5 - bl) / ml);
+                }
+                assert(cover <= 1);
+                cover = MAX(0, MIN(1, cover));
+                // blend_pixel_unclipped(tile, ixl, iy, color, float_to_coord(cover));
+                ixl++;
+                s2 = false;
+            }
+            float cover;
+            if (xl < ixl) {
+                float w = nxl - ixl;
+                cover = 1 - tril * w * w;
+            } else
+                cover = FRAC(ml * (iy + 0.5) + bl);
+            assert(cover <= 1);
+            cover = MAX(0, MIN(1, cover));
+            blend_pixel_unclipped(tile, ixl, iy, color, float_to_coord(cover));
+        } else {
+            while (nxl < ixl) {
+                float cover;
+                if (s2) {
+                    // N.B., tri < 0
+                    float w = xl - ixl;
+                    cover = 1 + tril * w * w;
+                } else
+                    cover = 1 - FRAC((ixl + 0.5 - bl) / ml);
+                cover = MAX(0, MIN(1, cover));
+                // blend_pixel_unclipped(tile, ixl, iy, color, float_to_coord(cover));
+                ixl--;
+                s2 = false;
+            }
+            float cover;
+            if (xl > ixl + 1) {
+                float w = ixl + 1 - nxl;
+                cover = -tril * w * w;
+            } else
+                cover = 1 - FRAC(ml * (iy + 0.5) + bl);
+            cover = MAX(0, MIN(1, cover));
+            // blend_pixel_unclipped(tile, ixl, iy, color, float_to_coord(cover));
+        }
+
+        if (mr >= 0) {
+            while (nxr > ixr + 1) {
+                float cover;
+                if (s2) {
+                    float w = xr - ixr - 1;
+                    cover = trir * w * w;
+                } else {
+                    cover = FRAC((ixr + 0.5 - br) / mr);
+                }
+                cover = MAX(0, MIN(1, cover));
+                // blend_pixel_unclipped(tile, ixr, iy, color, float_to_coord(cover));
+                ixr++;
+                s2 = false;
+            }
+            float cover;
+            if (xr < ixr) {
+                float w = nxr - ixr;
+                cover = 1 - trir * w * w; // XXX XXX XXX XXX
+            } else {
+                cover = FRAC(mr * (iy + 0.5) + br);
+            }
+            cover = MAX(0, MIN(1, cover));
+            // blend_pixel_unclipped(tile, ixr, iy, color, float_to_coord(cover));
+        } else {
+            while (nxr < ixr) {
+                float cover;
+                if (s2) {
+                    // N.B., tri < 0
+                    float w = xr - ixr;
+                    cover = 1 + trir * w * w;
+                } else {
+                    cover = 1 - FRAC((ixr + 0.5 - br) / mr);
+                }
+                cover = MAX(0, MIN(1, cover));
+                // blend_pixel_unclipped(tile, ixr, iy, color, float_to_coord(cover));
+                ixr--;
+                s2 = false;
+            }
+            float cover;
+            if (xr > ixr + 1) {
+                float w = ixr + 1 - nxr;
+                cover = -trir * w * w;
+            } else
+                cover = 1 - FRAC(mr * (iy + 0.5) + br);
+            cover = MAX(0, MIN(1, cover));
+            // blend_pixel_unclipped(tile, ixr, iy, color, float_to_coord(cover));
+        }
+
+        // rgb565 *row = tile->pixels[iy - tile->y];
+        // for (int ix = ixl + 1; ix < ixr; ix++)
+        //     row[ix] = c565;
+
+        iy++;
+    }
+}
+#endif
+
+typedef struct trapezoid {
+    float xl0, xr0, y0;
+    float xl1, xr1, y1;
+} trapezoid;
+
+static float intersect_trapezoid_left_with_x(const trapezoid *z, float x)
+{
+    assert(z->xl0 != z->xl1);
+    float m = (z->y1 - z->y0) / (z->xl1 - z->xl0);
+    return z->y0 + m * (x - z->xl0);
+}
+
+static float intersect_trapezoid_right_with_x(const trapezoid *z, float x)
+{
+    assert(z->xr0 != z->xr1);
+    float m = (z->y1 - z->y0) / (z->xr1 - z->xr0);
+    return z->y0 + m * (x - z->xr0);
+}
+
+static float intersect_trapezoid_left_with_y(const trapezoid *z, float y)
+{
+    assert(z->y0 != z->y1);
+    float m_inv = (z->xl1 - z->xl0) / (z->y1 - z->y0);
+    return z->xl0 + m_inv * (y - z->y0);
+}
+
+static float intersect_trapezoid_right_with_y(const trapezoid *z, float y)
+{
+    assert(z->y0 != z->y1);
+    float m_inv = (z->xr1 - z->xr0) / (z->y1 - z->y0);
+    return z->xr0 + m_inv * (y - z->y0);
+}
+
+static size_t clip_trapezoids_min_y(trapezoid *zoids, size_t n, float min_y)
+{
+    // verify trapezoids are in order.
+    for (size_t i = 1; i < n; i++)
+        assert(zoids[i-1].y1 == zoids[i].y0);
+
+    size_t i;
+    for (i = 0; i < n; i++)
+        if (zoids[i].y1 > min_y)
+            break;
+
+    // move the good ones up.
+    if (i > 0 && i < n)
+        memmove(zoids, zoids + i, (n - i) * sizeof *zoids);
+    n -= i;
+
+    // adjust the top edge
+    if (n) {
+        trapezoid *z = &zoids[0];
+        if (z->y0 < min_y) {
+            z->xl0 = intersect_trapezoid_left_with_y(z, min_y);
+            z->xr0 = intersect_trapezoid_right_with_y(z, min_y);
+            z->y0  = min_y;
+        }
+    }
+
+    return n;
+}
+
+static size_t clip_trapezoids_max_y(trapezoid *zoids, size_t n, float max_y)
+{
+    // verify trapezoids are in order.
+    for (size_t i = 1; i < n; i++)
+        assert(zoids[i-1].y1 == zoids[i].y0);
+
+   // forget the off-screen trapezoids.
+    while (n > 0 && zoids[n-1].y0 >= max_y)
+        n--;
+
+    // adjust the bottom edge.
+    if (n) {
+        trapezoid *z = &zoids[n - 1]; // last one
+        if (z->y1 > max_y) {
+            z->xl1 = intersect_trapezoid_left_with_y(z, max_y);
+            z->xr1 = intersect_trapezoid_right_with_y(z, max_y);
+            z->y1  = max_y;
+        }
+    }
+
+    return n;
+}
+
+static size_t clip_trapezoids_min_x(trapezoid *zoids, size_t n, float min_x)
+{
+    float nx, ny, ny1;
+    trapezoid *nz;
+
+    // verify trapezoids are left-to-right.
+    for (size_t i = 0; i < n; i++) {
+        trapezoid *z = &zoids[i];
+        assert(z->xl0 <= z->xr0);
+        assert(z->xl1 <= z->xr1);
+    }
+
+    for (size_t i = 0; i < n; i++) {
+        trapezoid *z = &zoids[i];
+        int mask = ((z->xl0 < min_x) << 0 |
+                    (z->xl1 < min_x) << 1 |
+                    (z->xr0 < min_x) << 2 |
+                    (z->xr1 < min_x) << 3);
+        switch (mask) {
+
+        case 0:                 // not clipped
+            break;
+
+        case 1:                 // xl0 clipped: split.
+            assert(n < 5);
+            nz      = &zoids[n++];
+            ny      = intersect_trapezoid_left_with_x(z, min_x);
+            nx      = intersect_trapezoid_right_with_y(z, ny);
+
+            nz->y0  = ny;
+            nz->xl0 = min_x;
+            nz->xr0 = nx;
+            nz->xl1 = min_x;
+            nz->xr1 = z->xr1;
+            nz->y1  = z->y1;
+
+            z->xl0  = min_x;
+            z->xl1  = min_x;
+            z->xr1  = nx;
+            z->y1   = ny;
+            // z->xr0, y0 unchanged
+            break;
+
+        case 2:                 // xl1 clipped: split.
+            assert(n < 5);
+            nz      = &zoids[n++];
+            ny      = intersect_trapezoid_left_with_x(z, min_x);
+            nx      = intersect_trapezoid_right_with_y(z, ny);
+
+            nz->xl0 = min_x;
+            nz->xr0 = nx;
+            nz->y0  = ny;
+            nz->xl1 = min_x;
+            nz->xr1 = z->xr1;
+            nz->y1  = z->y1;
+
+            z->xl1  = min_x;
+            z->xr1  = nx;
+            z->y1   = ny;
+            // z->xl0, xr0, y0 unchanged
+            break;
+
+        case 3:                 // xl0 and xl1 clipped
+            z->xl0  = min_x;
+            z->xl1  = min_x;
+            break;
+
+        case 5:                 // xl0 and xr0 clipped: split
+            assert(n < 5);
+            nz      = &zoids[n++];
+            ny      = intersect_trapezoid_left_with_x(z, min_x);
+            nx      = intersect_trapezoid_right_with_y(z, ny);
+            ny1     = intersect_trapezoid_right_with_x(z, min_x);
+
+            nz->xl0 = min_x;
+            nz->xr0 = nx;
+            nz->y0  = ny;
+            nz->xl1 = z->xl1;
+            nz->xr1 = z->xr1;
+            nz->y1  = z->y1;
+
+            z->xl0  = min_x;
+            z->xr0  = min_x;
+            z->y0   = ny1;
+            z->xl1  = min_x;
+            z->xr1  = nx;
+            z->y1   = ny;
+            break;
+
+        case 7:                 // xl0, xr0, xl1 clipped
+            ny      = intersect_trapezoid_right_with_x(z, min_x);
+
+            z->y0   = ny;
+            z->xl0  = min_x;
+            z->xr0  = min_x;
+            z->xl1  = min_x;
+            // z->xr1, y1 unchanged
+            break;
+
+        case 10:                // xl1, xr1 clipped: split
+            assert(n < 5);
+            nz      = &zoids[n++];
+            ny      = intersect_trapezoid_left_with_x(z, min_x);
+            nx      = intersect_trapezoid_right_with_y(z, ny);
+            ny1     = intersect_trapezoid_right_with_x(z, min_x);
+
+            nz->xl0 = min_x;
+            nz->xr0 = nx;
+            nz->y0  = ny;
+            nz->xl1 = min_x;
+            nz->xr1 = min_x;
+            nz->y1  = ny1;
+
+            z->xl1  = min_x;
+            z->xr1  = nx;
+            z->y1   = ny;
+            // z->xl0, xl1, y0 unchanged
+            break;
+
+        case 11:                // xl0, xl1, xr1 clipped
+            ny      = intersect_trapezoid_right_with_x(z, min_x);
+            z->xl0  = min_x;
+            z->xl1  = min_x;
+            z->xr1  = min_x;
+            z->y1   = ny;
+            // z->xr0, y0 unchanged
+            break;
+
+        case 15:                // off screen
+            zoids[i--] = zoids[--n];
+            break;
+
+        default:                // impossible
+            assert(false);
+        }
+    }
+
+    return n;
+}
+
+static size_t clip_trapezoids_max_x(trapezoid *zoids, size_t n, float max_x)
+{
+    float nx, ny, ny1;
+    trapezoid *nz;
+
+    // verify trapezoids are left-to-right.
+    for (size_t i = 0; i < n; i++) {
+        trapezoid *z = &zoids[i];
+        assert(z->xl0 <= z->xr0);
+        assert(z->xl1 <= z->xr1);
+    }
+
+    for (size_t i = 0; i < n; i++) {
+        trapezoid *z = &zoids[i];
+        int mask = ((z->xl0 > max_x) << 0 |
+                    (z->xr0 > max_x) << 1 |
+                    (z->xl1 > max_x) << 2 |
+                    (z->xr1 > max_x) << 3);
+        switch (mask) {
+
+        case 0:                 // not clipped
+            break;
+
+        case 2:                 // pr0 clipped: split
+            nz      = &zoids[n++];
+            ny      = intersect_trapezoid_right_with_x(z, max_x);
+            nx      = intersect_trapezoid_left_with_y(z, ny);
+
+            nz->xl0 = nx;
+            nz->xr0 = max_x;
+            nz->y0  = ny;
+            nz->xl1 = z->xl1;
+            nz->xr1 = z->xr1;
+            nz->y1  = z->y1;
+
+            z->xr0  = max_x;
+            z->xl1  = nx;
+            z->xr1  = max_x;
+            z->y1   = ny;
+            break;
+
+        case 3:                 // pl0, pr0 clipped: split
+            nz      = &zoids[n++];
+            ny      = intersect_trapezoid_right_with_x(z, max_x);
+            nx      = intersect_trapezoid_left_with_y(z, ny);
+            ny1     = intersect_trapezoid_left_with_x(z, max_x);
+
+            nz->xl0 = nx;
+            nz->xr0 = max_x;
+            nz->y0  = ny;
+            nz->xl1 = z->xl1;
+            nz->xr1 = z->xr1;
+            nz->y1  = z->y1;
+
+            z->xl0  = max_x;
+            z->xr0  = max_x;
+            z->y0   = ny1;
+            z->xl1  = nx;
+            z->xr1  = max_x;
+            z->y1   = ny;
+            break;
+
+        case 8:                 // pr1 clipped: split
+            nz      = &zoids[n++];
+            ny      = intersect_trapezoid_right_with_x(z, max_x);
+            nx      = intersect_trapezoid_left_with_y(z, ny);
+
+            nz->xl0 = nx;
+            nz->xr0 = max_x;
+            nz->y0  = ny;
+            nz->xl1 = z->xl1;
+            nz->xr1 = max_x;
+            nz->y1  = z->y1;
+
+            z->xl1  = nx;
+            z->xr1  = max_x;
+            z->y1   = ny;
+            break;
+
+        case 10:                // pr0, pr1 clipped
+            z->xr0 = max_x;
+            z->xr1 = max_x;
+            break;
+
+        case 11:                // pl0, pr0, pr1 clipped
+            ny     = intersect_trapezoid_left_with_x(z, max_x);
+
+            z->xl0 = max_x;
+            z->xr0 = max_x;
+            z->y0  = ny;
+            z->xr1 = max_x;
+            break;
+
+        case 12:                // pl1, pr1 clipped: split
+            nz      = &zoids[n++];
+            ny      = intersect_trapezoid_right_with_x(z, max_x);
+            nx      = intersect_trapezoid_left_with_y(z, ny);
+            ny1     = intersect_trapezoid_left_with_x(z, max_x);
+
+            nz->xl0 = nx;
+            nz->xr0 = max_x;
+            nz->y0  = ny;
+            nz->xl1 = max_x;
+            nz->xr1 = max_x;
+            nz->y1  = ny1;
+
+            z->xl1  = nx;
+            z->xr1  = max_x;
+            z->y1   = ny;
+            break;
+
+        case 14:                // pr0, pl1, pr1 clipped
+            ny     = intersect_trapezoid_left_with_x(z, max_x);
+
+            z->xr0 = max_x;
+            z->xl1 = max_x;
+            z->xr1 = max_x;
+            z->y1  = ny;
+            break;
+
+        case 15:                // off screen
+            zoids[i--] = zoids[--n];
+            break;
+
+        default:                // impossible
+            assert(false);
+        }
+    }
+
+    return n;
+}
+
+static size_t clip_trapezoids(pixtile *tile, trapezoid z[5], size_t n)
+{
+    n = clip_trapezoids_max_y(z, n, tile->y + tile->height);
+    n = clip_trapezoids_min_y(z, n, tile->y);
+    n = clip_trapezoids_min_x(z, n, 0);
+    n = clip_trapezoids_max_x(z, n, PIXTILE_WIDTH);
+    return n;
+}
+
 static void fill_triangle(pixtile *tile, coord verts[3][2], uint16_t color)
 {
     coord x0, y0, x1, y1, x2, y2;
@@ -398,10 +903,110 @@ static void fill_triangle(pixtile *tile, coord verts[3][2], uint16_t color)
     fill_trapezoid(tile, xl1, xr1, y1, x2, x2, y2, color);
 }                          
 
+static void fill_triangle_aa(pixtile *tile, coord verts[3][2], rgb888 color)
+{
+    coord x0, y0, x1, y1, x2, y2;
+    trapezoid *z;
+
+    // sort vertices by y.
+    if (verts[0][1] <= verts[1][1]) {
+        if (verts[0][1] <= verts[2][1]) {
+            if (verts[1][1] <= verts[2][1]) {
+                // v0 <= v1 <= v2
+                x0 = verts[0][0]; y0 = verts[0][1];
+                x1 = verts[1][0]; y1 = verts[1][1];
+                x2 = verts[2][0]; y2 = verts[2][1];
+            } else {
+                // v0 <= v2 < v1
+                x0 = verts[0][0]; y0 = verts[0][1];
+                x1 = verts[2][0]; y1 = verts[2][1];
+                x2 = verts[1][0]; y2 = verts[1][1];
+            }
+        } else {
+            // v2 < v0 < v1
+            x0 = verts[2][0]; y0 = verts[2][1];
+            x1 = verts[0][0]; y1 = verts[0][1];
+            x2 = verts[1][0]; y2 = verts[1][1];
+        }
+    } else {
+        // v1 < v0
+        if (verts[2][1] <= verts[1][1]) {
+            // v2 <= v1 < v0
+            x0 = verts[2][0]; y0 = verts[2][1];
+            x1 = verts[1][0]; y1 = verts[1][1];
+            x2 = verts[0][0]; y2 = verts[0][1];
+        } else {
+            // v1 < v0, v1 < v2
+            if (verts[0][1] <= verts[2][1]) {
+                // v1 < v0 <= v2
+                x0 = verts[1][0]; y0 = verts[1][1];
+                x1 = verts[0][0]; y1 = verts[0][1];
+                x2 = verts[2][0]; y2 = verts[2][1];
+            } else {
+                // v1 < v2 < v0
+                x0 = verts[1][0]; y0 = verts[1][1];
+                x1 = verts[2][0]; y1 = verts[2][1];
+                x2 = verts[0][0]; y2 = verts[0][1];
+            }
+        }
+    }
+
+    coord px1 = project_y_to_line(y1, x0, y0, x2, y2);
+
+    float fx0 = coord_to_float(x0), fy0 = coord_to_float(y0);
+    float fx1 = coord_to_float(x1), fy1 = coord_to_float(y1);
+    float fx2 = coord_to_float(x2), fy2 = coord_to_float(y2);
+    float fpx1 = coord_to_float(px1);
+    
+    float fxl1 = (px1 < x1) ? fpx1 : fx1;
+    float fxr1 = (px1 < x1) ? fx1 : fpx1;
+#if 0
+    fill_trapezoid_aa_unclipped(tile, fx0, fx0, fy0, fxl1, fxr1, fy1, color);
+    fill_trapezoid_aa_unclipped(tile, fxl1, fxr1, fy1, fx2, fx2, fy2, color);
+#else
+    trapezoid zoids[5];
+    z = zoids;
+
+    if (fy0 != fy1) {
+        z->xl0 = fx0;
+        z->xr0 = fx0;
+        z->y0  = fy0;
+        z->xl1 = fxl1;
+        z->xr1 = fxr1;
+        z->y1  = fy1;
+        z++;
+    }
+
+    if (fy1 != fy2) {
+        z->xl0 = fxl1;
+        z->xr0 = fxr1;
+        z->y0  = fy1;
+        z->xl1 = fx2;
+        z->xr1 = fx2;
+        z->y1  = fy2;
+        z++;
+    }
+
+    size_t n = z - zoids;
+    n = clip_trapezoids(tile, zoids, n);
+#if 0
+    for (size_t i = 0; i < n; i++) {
+        z = &zoids[i];
+        fill_trapezoid_aa_unclipped(tile,
+                                    z->xl0, z->xr0, z->y0,
+                                    z->xl1, z->xr1, z->y1,
+                                    color);
+    }
+#else
+    (void)color;
+#endif
+#endif
+}
+
 
 // --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  -
 
-#define ROTATION_RATE 0.005      // radians/frame
+#define ROTATION_RATE 0.001      // radians/frame
 #define STAR_RADIUS   (0.44 * MIN(SCREEN_HEIGHT, SCREEN_WIDTH))
 #define FG_COLOR      0xffff
 #define BG_COLOR      0x0802
@@ -423,7 +1028,7 @@ typedef enum drawing_mode {
 } drawing_mode;
 
 static drawing_mode current_mode;
-static drawing_mode new_mode;
+static drawing_mode new_mode = 4;
 static uint32_t mode_start_msec;
 
 static float angle = 0.0;
@@ -469,6 +1074,20 @@ static void fill_star(pixtile *tile, rgb888 color)
     }
 }
 
+static void fill_star_aa(pixtile *tile, rgb888 color)
+{
+    for (size_t i = 0; i < 5; i++) {
+        size_t j = (i + 3) % 5;
+        size_t k = (i + 4) % 5;
+        coord tri_pts[3][2] = {
+            { points[i][0], points[i][1] },
+            { in_pts[j][0], in_pts[j][1] },
+            { in_pts[k][0], in_pts[k][1] },
+        };
+        fill_triangle_aa(tile, tri_pts, color);
+    }
+}
+
 typedef struct mode_settings mode_settings;
 typedef void draw_op(pixtile *, const mode_settings *);
 
@@ -511,9 +1130,7 @@ static void draw_filled(pixtile *tile, const mode_settings *mode)
 
 static void draw_filled_aa(pixtile *tile, const mode_settings *mode)
 {
-    (void)tile;
-    (void)mode;
-    // XXX write me
+    fill_star_aa(tile, mode->fg_color);
 }
 
 static void draw_filled_fa(pixtile *tile, const mode_settings *mode)
@@ -576,8 +1193,8 @@ static void animate(void)
     }
 
     // Update position.
-    static coord x_inc = INT_TO_COORD(+1);
-    static coord y_inc = INT_TO_COORD(+1);
+    static coord x_inc = INT_TO_COORD(+0);
+    static coord y_inc = INT_TO_COORD(+0);
     center[0] += x_inc;
     center[1] += y_inc;
     if (x_inc > 0 && center[0] > int_to_coord(CENTER_X_MAX)) {
