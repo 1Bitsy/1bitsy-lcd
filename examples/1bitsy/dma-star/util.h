@@ -1,27 +1,50 @@
 #ifndef UTIL_included
 #define UTIL_included
 
-#define MIN(a, b) ({                                                    \
-                      __typeof__ (a) a_ = (a);                          \
-                      __typeof__ (b) b_ = (b);                          \
-                      a_ < b_ ? a_ : b_;                                \
-                  })
+#define CAT2_H(a, b) a##b
+#define CAT_H(a, b) CAT2_H(a, b)
+#define TMPVAR_H() CAT_H(tmp__, __COUNTER__)
 
-#define MAX(c, d) ({                                                    \
-                      __typeof__ (c) c_ = (c);                          \
-                      __typeof__ (d) d_ = (d);                          \
-                      c_ > d_ ? c_ : d_;                                \
-                  })
 
-#define ABS(e)    ({                                                    \
-                      __typeof__ (e) e_ = (e);                          \
-                      e_ < 0 ? -e_ : e_;                                \
-                  })
+#define MIN(a, b)           MIN_H(a, b, TMPVAR_H(), TMPVAR_H())
+#define MIN_H(a, b, t1, t2) ({                                          \
+                                __typeof__ (a) t1 = (a);                \
+                                __typeof__ (b) t2 = (b);                \
+                                t1 < t2 ? t1 : t2;                      \
+                            })
 
-#define SIGN(f)   ({                                                    \
-                      __typeof__ (f) f_ = (f);                          \
-                      f_ < 0 ? -1 : f_ > 0 ? +1 : 0;                    \
-                  })
+#define MAX(a, b)           MAX_H(a, b, TMPVAR_H(), TMPVAR_H())
+#define MAX_H(a, b, t1, t2) ({                                          \
+                                __typeof__ (a) t1 = (a);                \
+                                __typeof__ (b) t2 = (b);                \
+                                t1 > t2 ? t1 : t2;                      \
+                            })
+
+#define ABS(a)              ABS_H(a, TMPVAR_H())
+#define ABS_H(a, t)         ({                                          \
+                                __typeof__ (a) t = (a);                 \
+                                t < 0 ? -t: t;                          \
+                            })
+
+#define SIGN(x)             SIGN_H(x, TMPVAR_H())
+#define SIGN_H(x, t)        ({                                          \
+                                __typeof__ (x) t = (x);                 \
+                                t < 0 ? -1 : t > 0 ? +1 : 0;            \
+                            })
+
+// FLOOR(x) + FRAC(x) == x
+
+#define FLOOR(x)            FLOOR_H(x, t)
+#define FLOOR_H(x, t)       ({                                          \
+                                __typeof__ (x) t = (x);                 \
+                                t < 0 ? -(int)-t : (int)t;              \
+                            })
+
+#define FRAC(x)             FRAC_H(x, t)
+#define FRAC_H(x, t)        ({                                          \
+                                __typeof__ (x) t = (x);                 \
+                                t < 0 ? t + (int)-t : t - (int)t;       \
+                            })
 
 #endif /* !UTIL_included */
 
