@@ -25,6 +25,7 @@ LDLIBS   := -lm
 
 LDSCRIPT := stm32f4-1bitsy.ld
 
+V        := 1
 include ../Makefile.include
 CPPFLAGS += -I.
 CFLAGS   := $(filter-out -O%, $(CFLAGS)) -O0 -Werror
