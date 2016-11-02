@@ -151,8 +151,6 @@ static void dda_print(float x0, float y0, float x1, float y1)
     int fill_alpha   = 0xFF - unfill_alpha;
     int alpha        = MAX(0, alpha0 - unfill_alpha);
 
-// #define OPIX
-
     const int ix1 = (int)x1;
     const int iy1 = (int)y1;
     int       ix  = (int)x0;
@@ -183,7 +181,6 @@ static void dda_print(float x0, float y0, float x1, float y1)
             pix = ix;
             fix = ix + 1;
             pa = alpha;
-            // pixel(ix, iy, alpha);
             interp += gradient;
             alpha = 0xFF - (interp >> 8 & 0xFF);
             ix = interp >> 16;

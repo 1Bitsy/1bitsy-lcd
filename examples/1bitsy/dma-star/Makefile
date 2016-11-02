@@ -19,6 +19,7 @@
 
 BINARY   := dma-star
 SOURCES  := debounce.c gpio.c posix.c systick.c video.c
+# BINARY := dda2
 
 OBJS     := $(patsubst %.cpp, %.o, $(SOURCES:%.c=%.o))
 LDLIBS   := -lm
