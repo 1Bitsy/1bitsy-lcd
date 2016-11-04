@@ -77,6 +77,18 @@ const expectation expected[] = {
     { 'f', 2, 3, 0xff },
     { 'p', 1, 4, 0x7f },
     { 'f', 2, 4, 0x7f },
+
+    { 'p', 8, 1, 0xff },
+    { 'p', 7, 1, 0xbb },
+    { 'p', 6, 1, 0x77 },
+    { 'p', 5, 1, 0x33 },
+    { 'f', 9, 1, 0xff },
+    { 'p', 4, 2, 0xee },
+    { 'p', 3, 2, 0xaa },
+    { 'p', 2, 2, 0x66 },
+    { 'f', 5, 2, 0xff },
+    { 'p', 1, 3, 0    },
+    { 'f', 2, 3, 0    },
 };
 
 size_t ex_count = (&expected)[1] - expected;
@@ -127,15 +139,16 @@ static void dda_print(float x0, float y0, float x1, float y1)
     assert(dy >= 0);
     int   inc = (dx < 0) ? -1 : +1;
     float half_inc = (dx < 0) ? -0.5 : +0.5;
+    int   comp = (dx < 0) ? ~0 : 0;
 
-    const bool steep = ABS(dx) > ABS(dy);
+    const bool steep = ABS(dx) > dy;
     int interp, gradient, alpha0;
     if (steep) {
         // X axis changes faster
         float m  = dy / dx;
-        interp   = (int)(65536.0 * (y0 + m * ((int)x0 + half_inc - x0)));
-        gradient = (int)(65536.0 * m);
-        alpha0   = interp >> 8 & 0xFF;
+        interp   = (int)(65536.0 * (y0 + m * ((int)x0 - x0 + 0.5)));
+        gradient = (int)(65536.0 * ABS(m));
+        alpha0   = (interp ^ comp) >> 8 & 0xFF;
         // printf("steep: m = %g, interp = %#x, gradient = %#x, alpha0 = %#x\n",
         //        m, interp, gradient, alpha0);
     } else {
@@ -168,10 +181,10 @@ static void dda_print(float x0, float y0, float x1, float y1)
                 fix2 = ix + 1;
                 pa = alpha;
                 interp += gradient;
-                alpha = interp >> 8 & 0xFF;
+                alpha = (interp ^ comp) >> 8 & 0xFF;
                 iyt = interp >> 16;
                 ix += inc;
-                if (iyt != iy || ix == ix1 + inc)
+                if (iyt != iy || inc * (ix - ix1) > comp)
                     break;
                 pixel(pix, iyt, pa);
             }
@@ -211,6 +224,9 @@ int main(void)
     point p6 = { 3, 1.5 };
     point p7 = { 1, 4.5 };
 
+    point p8 = { 8.5, 1.0 };
+    point p9 = { 1.0, 3.0 };
+
     dda_print(p0.x, p0.y, p1.x, p1.y);
     putchar('\n');
     dda_print(p2.x, p2.y, p3.x, p3.y);
@@ -218,6 +234,8 @@ int main(void)
     dda_print(p4.x, p4.y, p5.x, p5.y);
     putchar('\n');
     dda_print(p6.x, p6.y, p7.x, p7.y);
+    putchar('\n');
+    dda_print(p8.x, p8.y, p9.x, p9.y);
 #ifdef EXPECT
     return success ? EXIT_SUCCESS : EXIT_FAILURE;
 #else
