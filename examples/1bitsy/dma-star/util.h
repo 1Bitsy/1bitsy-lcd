@@ -20,10 +20,12 @@
                                 t1 > t2 ? t1 : t2;                      \
                             })
 
+// SIGN(x) * ABS(x) == x
+
 #define ABS(a)              ABS_H(a, TMPVAR_H())
 #define ABS_H(a, t)         ({                                          \
                                 __typeof__ (a) t = (a);                 \
-                                t < 0 ? -t: t;                          \
+                                t >= 0 ? t: -t;                         \
                             })
 
 #define SIGN(x)             SIGN_H(x, TMPVAR_H())
@@ -37,13 +39,19 @@
 #define FLOOR(x)            FLOOR_H(x, t)
 #define FLOOR_H(x, t)       ({                                          \
                                 __typeof__ (x) t = (x);                 \
-                                t < 0 ? -(int)-t : (int)t;              \
+                                t >= 0 ? (int)t : -(int)-t;             \
+                            })
+
+#define CEIL(x)            CEIL_H(x, t)
+#define CEIL_H(x, t)       ({                                           \
+                                __typeof__ (x) t = (x);                 \
+                                t >= 0 ? -(int)-t : (int)t;             \
                             })
 
 #define FRAC(x)             FRAC_H(x, t)
 #define FRAC_H(x, t)        ({                                          \
                                 __typeof__ (x) t = (x);                 \
-                                t < 0 ? t + (int)-t : t - (int)t;       \
+                                t >= 0 ? t - (int)t : t + (int)-t;      \
                             })
 
 #endif /* !UTIL_included */
