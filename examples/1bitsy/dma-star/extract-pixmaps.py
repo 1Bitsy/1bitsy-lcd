@@ -72,6 +72,45 @@ for k in region_map:
         assert reg_img[k] != reg_img[v+1]
         # print('img[{}] == img[{}]'.format(k, v))
 
+def by_n(n, seq):
+    return ((x for (i, x) in g)
+            for (k, g) in groupby(enumerate(seq), lambda x: x[0] // n))
+
+########################################################################
+
+def pack_rgb565(tup):
+    return (tup[0] >> 3 << 11 |
+            tup[0] >> 2 <<  5 |
+            tup[0] >> 3 <<  0)
+
+bg_path = 'pixmaps/water-abstract-water-turquoise-repeating-image.png'
+bg_img = PIL.Image.open(bg_path)
+bg_pix = bg_img.load()
+bg_w, bg_h = bg_img.size
+
+bg_packed = [[pack_rgb565(bg_pix[x, y])
+              for x in range(bg_w)]
+             for y in range(bg_h)]
+
+bg_bytes =  ',\n'.join('    {{ {} }}'
+                       .format(',\n      '.join(', '.join('{:3d}'.format(b)
+                                                          for b in line)
+                                                for line in by_n(8, row)))
+                       for row in bg_packed)
+
+bg_template = '''
+#define BG_PIXMAP_HEIGHT {h}
+#define BG_PIXMAP_WIDTH {w}
+
+static const uint16_t bg_pixmap[BG_PIXMAP_HEIGHT][BG_PIXMAP_WIDTH] = {{
+{bytes}
+}};'''.lstrip()
+
+bg_def = bg_template.format(h=bg_h, w=bg_w, bytes=bg_bytes)
+
+
+########################################################################
+
 template = '''
 #ifndef PIXMAPS_included
 #define PIXMAPS_included
@@ -86,19 +125,16 @@ template = '''
 typedef uint8_t text_pixmap[{height}][{width}];
 
 {definitions}
+{bg_def}
+
 #endif /* !PIXMAPS_included */
 '''.lstrip()
 
 pixmap_template = r'''
-// static const uint8_t {name}[{height}][{width}] = {{
 static const text_pixmap {name} = {{
 {bytes}
 }};
 '''.lstrip()
-
-def by_n(n, seq):
-    return ((x for (i, x) in g)
-            for (k, g) in groupby(enumerate(seq), lambda x: x[0] // n))
 
 def format_map(index, name):
     pixels = reg_data[index]
@@ -120,5 +156,6 @@ defs = '\n\n'.join(
 print(template.format(program=sys.argv[0],
                       width=region_width,
                       height=region_height,
-                      definitions=defs))
+                      definitions=defs,
+                      bg_def=bg_def))
 

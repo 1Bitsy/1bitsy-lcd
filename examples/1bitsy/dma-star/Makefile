@@ -31,7 +31,7 @@ CFLAGS :=
 include ../Makefile.include
 CPPFLAGS += -I.
 OPT      := -O3
-cflags   := $(filter_out -O%, $(CFLAGS)) -Werror
+cflags   := $(filter_out -O%, $(CFLAGS)) -Werror -g
 CFLAGS    = $(cflags) $(OPT)
 
 video.o: OPT = -O0

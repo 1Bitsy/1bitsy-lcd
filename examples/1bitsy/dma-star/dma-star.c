@@ -30,6 +30,41 @@
 typedef uint16_t rgb565;
 typedef uint32_t rgb888;        // 0x00rrggbb
 
+typedef struct trapezoid {
+    float xl0, xr0, y0;
+    float xl1, xr1, y1;
+} trapezoid;
+
+typedef union point {
+    struct {
+        float x, y;             // use p.x, p.y
+    };
+    float c[2];                 // use p.c[i]
+} point;
+
+// Inputs: rotation, velocity, position
+// Outputs: points, in_pts, angle, star_opacity
+// Put those into an anim_state structure.
+
+typedef struct anim_param {
+} anim_param;
+
+typedef struct anim_state {
+    float radius;
+    point vel;
+    float angle;
+    float rot_vel;
+    point center;
+    point points[5];
+    point in_pts[5];
+    float opacity;
+    float opa_vel;
+    int   opa_dir;
+    
+} anim_state;
+
+static anim_state anim_states[6];
+
 static inline rgb565 pack_color(rgb888 c)
 {
     uint32_t r = (c >> 16 & 0xFF) >> 3;
@@ -49,10 +84,27 @@ static inline rgb888 unpack_color(rgb565 c)
     return pr8 << 16 | pg8 << 8 | pb8 << 0;
 }
 
+static inline rgb565 blend_to_black(rgb565 color, uint8_t alpha)
+{
+    uint32_t r5 = color >> 11 & 0x1f;
+    uint32_t g6 = color >>  5 & 0x3f;
+    uint32_t b5 = color >>  0 & 0x1f;
+    // uint32_t r8 = r5 << 3 | r5 >> 2;
+    // uint32_t g8 = g6 << 2 | g6 >> 4;
+    // uint32_t b8 = b5 << 3 | b5 >> 2;
+    uint32_t r8 = r5 << 3;
+    uint32_t g8 = g6 << 2;
+    uint32_t b8 = b5 << 3;
+    r8 *= alpha; r8 >>= 8;
+    g8 *= alpha; g8 >>= 8;
+    b8 *= alpha; b8 >>= 8;
+    return (r8 << 8 & 0xf800) | (g8 << 3 & 0x07e0) | (b8 >> 3 & 0x001f);
+}
+
 // XXX fast path when alpha == 0 or alpha == opaque.
-static inline void blend_pixel_unclipped(pixtile *tile,
-                                         int x, int y,
-                                         rgb888 color, coord alpha)
+static inline void blend_pixel_unclipped_co(pixtile *tile,
+                                            int x, int y,
+                                            rgb888 color, coord alpha)
 {
     assert(0 <= alpha && alpha <= 256);
 
@@ -74,12 +126,12 @@ static inline void blend_pixel_unclipped(pixtile *tile,
     *p = (pr8 << 8 & 0xf800) | (pg8 << 3 & 0x07e0) | (pb8 >> 3 & 0x001f);
 }
 
-static inline void blend_pixel(pixtile *tile,
+static inline void blend_pixel_co(pixtile *tile,
                                int x, int y,
                                rgb888 color, coord alpha)
 {
     if (x_in_pixtile(tile, x) && y_in_pixtile(tile, y)) {
-        blend_pixel_unclipped(tile, x, y, color, alpha);
+        blend_pixel_unclipped_co(tile, x, y, color, alpha);
     }
 }
 
@@ -88,13 +140,13 @@ static void blend_pixel_span_unclipped(pixtile *tile,
                                        rgb888 color,  uint8_t alpha)
 {
     for (int x = x0; x <= x1; x++)
-        blend_pixel_unclipped(tile, x, y, color, alpha);
+        blend_pixel_unclipped_co(tile, x, y, color, alpha);
 }
 
-static void draw_line(pixtile *tile,
-                      coord x0, coord y0,
-                      coord x1, coord y1,
-                      uint16_t color)
+static void draw_line_co(pixtile *tile,
+                         coord x0, coord y0,
+                         coord x1, coord y1,
+                         uint16_t color)
 {
     int min_x = 0;
     int max_x = PIXTILE_WIDTH;
@@ -180,11 +232,11 @@ static void draw_line(pixtile *tile,
     }
 }
 
-static void draw_line_aa(pixtile *tile,
-                         coord x0, coord y0,
-                         coord x1, coord y1,
-                         rgb888 color,
-                         uint8_t alpha)
+static void draw_line_aa_co(pixtile *tile,
+                            coord x0, coord y0,
+                            coord x1, coord y1,
+                            rgb888 color,
+                            uint8_t alpha)
 {
     // Cribbed directly from en.wikipedia.org/wiki/Xiaolin_Wu%27s_line_algorithm
     // Could be optimized by clipping earlier.
@@ -213,14 +265,14 @@ static void draw_line_aa(pixtile *tile,
     int a;
     if (steep) {
         a = coord_to_int(coord_product(coord_rfrac(yend), xgap));
-        blend_pixel(tile, ypxl1, xpxl1, color, a);
+        blend_pixel_co(tile, ypxl1, xpxl1, color, a);
         a = coord_to_int(coord_product(coord_frac(yend), xgap));
-        blend_pixel(tile, ypxl1 + 1, xpxl1, color, a);
+        blend_pixel_co(tile, ypxl1 + 1, xpxl1, color, a);
     } else {
         a = coord_to_int(coord_product(coord_rfrac(yend), xgap));
-        blend_pixel(tile, xpxl1, ypxl1, color, a);
+        blend_pixel_co(tile, xpxl1, ypxl1, color, a);
         a = coord_to_int(coord_product(coord_frac(yend), xgap));
-        blend_pixel(tile, xpxl1, ypxl1 + 1, color, a);
+        blend_pixel_co(tile, xpxl1, ypxl1 + 1, color, a);
     }
     float intery = coord_to_float(yend) + gradient;
 
@@ -234,14 +286,14 @@ static void draw_line_aa(pixtile *tile,
     int ypxl2 = coord_to_int(yend);
     if (steep) {
         a = coord_to_int(coord_product(coord_rfrac(yend), xgap));
-        blend_pixel(tile, ypxl2, xpxl2, color, a);
+        blend_pixel_co(tile, ypxl2, xpxl2, color, a);
         a = coord_to_int(coord_product(coord_frac(yend), xgap));
-        blend_pixel(tile, ypxl2 + 1, xpxl2, color, a);
+        blend_pixel_co(tile, ypxl2 + 1, xpxl2, color, a);
     } else {
         a = coord_to_int(coord_product(coord_rfrac(yend), xgap));
-        blend_pixel(tile, xpxl2, ypxl2, color, a);
+        blend_pixel_co(tile, xpxl2, ypxl2, color, a);
         a = coord_to_int(coord_product(coord_frac(yend), xgap));
-        blend_pixel(tile, xpxl2, ypxl2 + 1, color, a);
+        blend_pixel_co(tile, xpxl2, ypxl2 + 1, color, a);
     }
 
     // main loop
@@ -250,11 +302,11 @@ static void draw_line_aa(pixtile *tile,
             a = coord_to_int(
                 coord_product(int_to_coord(alpha),
                               coord_rfrac(float_to_coord(intery))));
-            blend_pixel(tile, (int)intery, x, color, a);
+            blend_pixel_co(tile, (int)intery, x, color, a);
             a = coord_to_int(
                 coord_product(int_to_coord(alpha),
                               coord_frac(float_to_coord(intery))));
-            blend_pixel(tile, (int)intery + 1, x, color, a);
+            blend_pixel_co(tile, (int)intery + 1, x, color, a);
             intery += gradient;
         }
     } else {
@@ -262,35 +314,40 @@ static void draw_line_aa(pixtile *tile,
             a = coord_to_int(
                 coord_product(int_to_coord(alpha),
                               coord_rfrac(float_to_coord(intery))));
-            blend_pixel(tile, x, (int)intery, color, a);
+            blend_pixel_co(tile, x, (int)intery, color, a);
             a = coord_to_int(
                 coord_product(int_to_coord(alpha),
                               coord_frac(float_to_coord(intery))));
-            blend_pixel(tile, x, (int)intery + 1, color, a);
+            blend_pixel_co(tile, x, (int)intery + 1, color, a);
             intery += gradient;
         }
     }
 }
 
+#if 0
 // project x onto the line (x0,y0) <-> (x1,y1) and return y.
 static inline coord
-project_x_to_line(coord x, coord x0, coord y0, coord x1, coord y1)
+project_x_to_line_co(coord x, coord x0, coord y0, coord x1, coord y1)
 {
     if (x1 == x0)
         return y0;
     return y0 + coord_quotient(coord_product(x - x0, y1 - y0), x1 - x0);
 }
+#endif
 
+#if 0
 // project y onto the line (x0,y0) <-> (x1,y1) and return x.
 static inline coord
-project_y_to_line(coord y, coord x0, coord y0, coord x1, coord y1)
+project_y_to_line_co(coord y, coord x0, coord y0, coord x1, coord y1)
 {
     if (y1 == y0)
         return x0;
     return x0 + coord_quotient(coord_product(y - y0, x1 - x0), y1 - y0);
 }
+#endif
+
 static inline float
-project_y_to_line_f(float y, float x0, float y0, float x1, float y1)
+project_y_to_line(float y, float x0, float y0, float x1, float y1)
 {
     if (y1 == y0)
         return x0;
@@ -326,11 +383,6 @@ static inline void line_intersection(float x00, float y00, float x01, float y01,
         *y_out = m0 * x + b0;
     }    
 }
-
-typedef struct trapezoid {
-    float xl0, xr0, y0;
-    float xl1, xr1, y1;
-} trapezoid;
 
 static void fill_trapezoid_unclipped(pixtile *tile,
                                      const trapezoid *z,
@@ -441,7 +493,7 @@ static void fill_trapezoid_aa_unclipped(pixtile *tile,
                 ixl += incl;
                 if (iyt != iy || incl * (ixl - ixl1) > comp_l)
                     break;
-                blend_pixel_unclipped(tile, pixl, iyt, color, pal * alpha >> 8);
+                blend_pixel_unclipped_co(tile, pixl, iyt, color, pal * alpha >> 8);
                 // pixel(pixl, iyt, pal);
             }
             if (incl == +1)
@@ -468,7 +520,7 @@ static void fill_trapezoid_aa_unclipped(pixtile *tile,
                 ixr += incr;
                 if (iyt != iy || incr * (ixr - ixr1) > comp_r)
                     break;
-                blend_pixel_unclipped(tile, pixr, iyt, color, par * alpha >> 8);
+                blend_pixel_unclipped_co(tile, pixr, iyt, color, par * alpha >> 8);
                 // pixel(pixr, iyt, par);
             }
             if (incr == -1)
@@ -486,17 +538,17 @@ static void fill_trapezoid_aa_unclipped(pixtile *tile,
             // (1 - a) = (1 - pal) - (1 - par)
             int a = MAX(0, pal + par - 0xFF);
             if (a > 0)
-                blend_pixel_unclipped(tile, pixl, iy, color, a * alpha >> 8);
+                blend_pixel_unclipped_co(tile, pixl, iy, color, a * alpha >> 8);
             
         } else if (pixl < pixr) {
             if (pal > 0)
-                blend_pixel_unclipped(tile, pixl, iy, color, pal * alpha >> 8);
+                blend_pixel_unclipped_co(tile, pixl, iy, color, pal * alpha >> 8);
             if (fill_alpha > 0)
                 blend_pixel_span_unclipped(tile,
                                            fixl, fixr, iy,
                                            color, fill_alpha * alpha >> 8);
             if (par > 0)
-                blend_pixel_unclipped(tile, pixr, iy, color, par * alpha >> 8);
+                blend_pixel_unclipped_co(tile, pixr, iy, color, par * alpha >> 8);
         }
         if (++iy == iy1) {
             // fill_alpha = 0xFF * (1 - FRAC(y1));
@@ -920,7 +972,7 @@ static void fill_triangle(pixtile *tile, float verts[3][2], uint16_t color)
         }
     }
 
-    float px1 = project_y_to_line_f(y1, x0, y0, x2, y2);
+    float px1 = project_y_to_line(y1, x0, y0, x2, y2);
 
     float xl1 = (px1 < x1) ? px1 : x1;
     float xr1 = (px1 < x1) ? x1 : px1;
@@ -1006,7 +1058,7 @@ static void fill_triangle_aa(pixtile *tile,
         }
     }
 
-    float px1 = project_y_to_line_f(y1, x0, y0, x2, y2);
+    float px1 = project_y_to_line(y1, x0, y0, x2, y2);
 
     float xl1 = (px1 < x1) ? px1 : x1;
     float xr1 = (px1 < x1) ? x1 : px1;
@@ -1046,6 +1098,7 @@ static void fill_triangle_aa(pixtile *tile,
 // --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  -
 
 #define ROTATION_RATE 0.005      // radians/frame
+#define OPACITY_RATE  0.020      // alpha/frame
 #define STAR_RADIUS   (0.44 * MIN(SCREEN_HEIGHT, SCREEN_WIDTH))
 #define FG_COLOR      0xffff
 #define BG_COLOR      0x0802
@@ -1070,12 +1123,10 @@ static drawing_mode current_mode;
 static drawing_mode new_mode;
 static uint32_t mode_start_msec;
 
-static float angle = 0.2;
-static coord points[5][2];
-static float fpoints[5][2];
-static coord in_pts[5][2];
-static coord f_in_pts[5][2];
-static coord center[2];
+// static float angle = 0.2;
+static float points[5][2];
+static float in_pts[5][2];
+// static coord center[2];
 static int star_opacity = 0;
 
 
@@ -1084,9 +1135,11 @@ static void outline_star(pixtile *tile, rgb888 color)
     rgb565 pcolor = pack_color(color);
     for (int i = 0; i < 5; i++) {
         int j = (i + 2) % 5;
-        coord *p0 = points[i];
-        coord *p1 = points[j];
-        draw_line(tile, p0[0], p0[1], p1[0], p1[1], pcolor);
+        coord x0_co = float_to_coord(points[i][0]);
+        coord y0_co = float_to_coord(points[i][1]);
+        coord x1_co = float_to_coord(points[j][0]);
+        coord y1_co = float_to_coord(points[j][1]);
+        draw_line_co(tile, x0_co, y0_co, x1_co, y1_co, pcolor);
     }
 }
 
@@ -1094,9 +1147,11 @@ static void outline_star_aa(pixtile *tile, rgb888 color, uint8_t alpha)
 {
     for (int i = 0; i < 5; i++) {
         int j = (i + 2) % 5;
-        coord *p0 = points[i];
-        coord *p1 = points[j];
-        draw_line_aa(tile, p0[0], p0[1], p1[0], p1[1], color, alpha);
+        coord x0_co = float_to_coord(points[i][0]);
+        coord y0_co = float_to_coord(points[i][1]);
+        coord x1_co = float_to_coord(points[j][0]);
+        coord y1_co = float_to_coord(points[j][1]);
+        draw_line_aa_co(tile, x0_co, y0_co, x1_co, y1_co, color, alpha);
     }
 }
 
@@ -1107,9 +1162,9 @@ static void fill_star(pixtile *tile, rgb888 color)
         size_t j = (i + 3) % 5;
         size_t k = (i + 4) % 5;
         float tri_pts[3][2] = {
-            { fpoints[i][0], fpoints[i][1] },
-            { f_in_pts[j][0], f_in_pts[j][1] },
-            { f_in_pts[k][0], f_in_pts[k][1] },
+            { points[i][0], points[i][1] },
+            { in_pts[j][0], in_pts[j][1] },
+            { in_pts[k][0], in_pts[k][1] },
         };
         fill_triangle(tile, tri_pts, pcolor);
     }
@@ -1121,9 +1176,9 @@ static void fill_star_aa(pixtile *tile, rgb888 color, uint8_t alpha)
         size_t j = (i + 3) % 5;
         size_t k = (i + 4) % 5;
         float tri_pts[3][2] = {
-            { fpoints[i][0], fpoints[i][1] },
-            { f_in_pts[j][0], f_in_pts[j][1] },
-            { f_in_pts[k][0], f_in_pts[k][1] },
+            { points[i][0], points[i][1] },
+            { in_pts[j][0], in_pts[j][1] },
+            { in_pts[k][0], in_pts[k][1] },
         };
         fill_triangle_aa(tile, tri_pts, color, alpha);
     }
@@ -1160,7 +1215,8 @@ static void draw_outline_aa(pixtile *tile, const mode_settings *mode)
 
 static void draw_outline_fa(pixtile *tile, const mode_settings *mode)
 {
-    int opacity = star_opacity * star_opacity / 255;
+    // int opacity = star_opacity * star_opacity / 255;
+    int opacity = star_opacity;
     outline_star_aa(tile, mode->fg_color, opacity);
 }
 
@@ -1176,23 +1232,65 @@ static void draw_filled_aa(pixtile *tile, const mode_settings *mode)
 
 static void draw_filled_fa(pixtile *tile, const mode_settings *mode)
 {
-    int opacity = star_opacity * star_opacity / 255;
+    // int opacity = star_opacity * star_opacity / 255;
+    int opacity = star_opacity;
     fill_star_aa(tile, mode->fg_color, opacity);
 }
 
 static const mode_settings demo_modes[];
 
+static void draw_background(pixtile *tile)
+{
+    static size_t bg_offset;
+    static int alpha;
+    static int inc = +1;
+
+    if (tile->y == 0) {
+        bg_offset = (bg_offset + 1) % BG_PIXMAP_WIDTH;
+        alpha += inc;
+        if (alpha > 0xFF) {
+            alpha = 0x1fe - alpha;
+            inc = -1;
+        } else if (alpha < 0) {
+            alpha = -alpha;
+            inc = +1;
+        }
+    }
+
+    size_t y0 = tile->y, y1 = y0 + tile->height;
+    assert(y1 <= BG_PIXMAP_HEIGHT);
+
+    size_t x0 = bg_offset, x1 = x0 + PIXTILE_WIDTH, x2 = x1;
+    if (x1 > BG_PIXMAP_WIDTH) {
+        x2 = x1 - BG_PIXMAP_WIDTH;
+        x1 = BG_PIXMAP_WIDTH;
+    }
+
+    for (size_t y = y0, iy = 0; y < y1; y++, iy++)
+        for (size_t x = x0, ix = 0; x < x1; x++, ix++)
+            // tile->pixels[iy][ix] = bg_pixmap[y][x];
+            tile->pixels[iy][ix] = blend_to_black(bg_pixmap[y][x], alpha);
+    if (x2 != x1)
+        for (size_t y = y0, iy = 0; y < y1; y++, iy++)
+            for (size_t x = 0, ix = x1 - x0; x < x2; x++, ix++)
+                // tile->pixels[iy][ix] = bg_pixmap[y][x];
+                tile->pixels[iy][ix] = blend_to_black(bg_pixmap[y][x], alpha);
+}
+
 static void draw_everything(pixtile *tile, const mode_settings *mode)
 {
-    (void)tile;
-    (void)mode;
+    static const size_t op_permute[7] = { 3, 4, 5, 0, 1, 2, 6 };
 
-    // for (size_t i = 0; ; i++) {
-    //     const mode_settings *mode = &demo_modes[i];
-    //     if (mode->op == draw_everything)
-    //         break;
-    //     mode->op(tile, mode);
-    // }
+    draw_background(tile);
+    for (size_t i = 0; ; i++) {
+        const mode_settings *mode = &demo_modes[op_permute[i]];
+        if (mode->op == draw_everything)
+            break;
+        memcpy(points, anim_states[i].points, sizeof points);
+        memcpy(in_pts, anim_states[i].in_pts, sizeof in_pts);
+        star_opacity = 255 * anim_states[i].opacity;
+        mode->op(tile, mode);
+    }
 }
 
 static const mode_settings demo_modes[] = {
@@ -1207,9 +1305,125 @@ static const mode_settings demo_modes[] = {
 };
 static const size_t mode_count = (&demo_modes)[1] - demo_modes;
 
-// Inputs: rotation, velocity, edges
-// Outputs: points, in_pts, angle, star_opacity
-// Put those into an anim_state structure.
+static void init_anim_state(anim_state *a,
+                            float radius,
+                            point vel,
+                            float rot_vel,
+                            float opacity_vel)
+{
+    a->radius  = radius;
+    a->vel     = vel;
+    a->angle   = 0;
+    a->rot_vel = rot_vel;
+    a->center  = (point){ { SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 } };
+    a->opacity = 0;
+    a->opa_vel = opacity_vel;
+    a->opa_dir = +1;
+}
+
+static void setup_animation(void)
+{
+#ifdef MOVE
+    point vel = { { +1, +1 } };
+#else
+    point vel = { { +0, +0 } };
+#endif
+    init_anim_state(&anim_states[0],
+                    STAR_RADIUS,
+                    vel,
+                    ROTATION_RATE,
+                    OPACITY_RATE);
+
+    init_anim_state(&anim_states[1],
+                    0.34 * SCREEN_WIDTH,
+                    (point) { { 1.5, 1.5 } },
+                    -0.003,
+                    0.030);
+
+    init_anim_state(&anim_states[2],
+                    0.34 * SCREEN_WIDTH,
+                    (point) { { 1.5, -1.5 } },
+                    +0.004,
+                    0.030);
+
+    init_anim_state(&anim_states[3],
+                    0.24 * SCREEN_WIDTH,
+                    (point) { { -1, 0.5 } },
+                    -0.008,
+                    0.030);
+
+    init_anim_state(&anim_states[4],
+                    0.48 * SCREEN_WIDTH,
+                    (point) { { -1, -1.5 } },
+                    +0.002,
+                    0.030);
+
+    init_anim_state(&anim_states[5],
+                    0.40 * SCREEN_WIDTH,
+                    (point) { { 1.0, -1.1 } },
+                    +0.003,
+                    0.040);
+}
+
+static void anim_state_update(anim_state *a)
+{
+    // static const float past_edge = 40;
+    #define PAST_EDGE 40
+    static const point min_pos = { { -PAST_EDGE, -PAST_EDGE } };
+    static const point max_pos = { { SCREEN_WIDTH  + PAST_EDGE,
+                                     SCREEN_HEIGHT + PAST_EDGE } };
+
+    // Update angle.
+    a->angle += a->rot_vel;
+    if (a->angle > 2 * M_PI)
+        a->angle -= 2 * M_PI;
+    else if (a->angle < 0)
+        a->angle += 2 * M_PI;
+
+    // Update position.
+    for (size_t i = 0; i < 2; i++) {
+        float c = a->center.c[i] + a->vel.c[i];
+        float min_c = min_pos.c[i] + a->radius;
+        if (c < min_c) {
+            c = 2 * min_c - c;
+            a->vel.c[i] = ABS(a->vel.c[i]);
+        }
+        float max_c = max_pos.c[i] - a->radius;
+        if (c > max_c) {
+            c = 2 * max_c - c;
+            a->vel.c[i] = -ABS(a->vel.c[i]);
+        }
+        a->center.c[i] = c;
+    }
+
+    // Update opacity.
+    a->opacity += a->opa_vel;
+    if (a->opacity > 1.0) {
+        a->opacity = 2 - a->opacity;
+        a->opa_vel = -ABS(a->opa_vel);
+    } else if (a->opacity < 0.0) {
+        a->opacity = -a->opacity;
+        a->opa_vel = ABS(a->opa_vel);
+    }
+    
+    // Update star points.
+    for (size_t i = 0; i < 5; i++) {
+        float angle = a->angle + i * M_PI * 0.40;
+        a->points[i].x = a->center.x + a->radius * cosf(angle);
+        a->points[i].y = a->center.y + a->radius * sinf(angle);
+    }
+
+    // Update star inner points.
+    for (size_t i = 0; i < 5; i++) {
+        point *p00 = &a->points[i];
+        point *p01 = &a->points[(i + 2) % 5];
+        point *p10 = &a->points[(i + 1) % 5];
+        point *p11 = &a->points[(i + 3) % 5];
+        line_intersection(p00->x, p00->y, p01->x, p01->y,
+                          p10->x, p10->y, p11->x, p11->y,
+                          &a->in_pts[i].x, &a->in_pts[i].y);
+    }
+}
 
 static void animate(void)
 {
@@ -1220,6 +1434,7 @@ static void animate(void)
         mode_start_msec = system_millis;
     }
     
+#if 0
     // Update rotation angle.
     angle += ROTATION_RATE;
     if (angle >= 2 * M_PI)
@@ -1266,28 +1481,31 @@ static void animate(void)
 
     for (size_t i = 0; i < 5; i++) {
         float a = angle + i * 360 / 5 * M_PI / 180;
-        fpoints[i][0] = coord_to_float(center[0]) + STAR_RADIUS * sinf(a);
-        fpoints[i][1] = coord_to_float(center[1]) - STAR_RADIUS * cosf(a);
-        points[i][0] = float_to_coord(fpoints[i][0]);
-        points[i][1] = float_to_coord(fpoints[i][1]);
+        points[i][0] = coord_to_float(center[0]) + STAR_RADIUS * sinf(a);
+        points[i][1] = coord_to_float(center[1]) - STAR_RADIUS * cosf(a);
     }
     for (size_t i = 0; i < 5; i++) {
-        float *p00 = fpoints[i];
-        float *p01 = fpoints[(i + 2) % 5];
-        float *p10 = fpoints[(i + 1) % 5];
-        float *p11 = fpoints[(i + 3) % 5];
+        float *p00 = points[i];
+        float *p01 = points[(i + 2) % 5];
+        float *p10 = points[(i + 1) % 5];
+        float *p11 = points[(i + 3) % 5];
         float x, y;
         line_intersection(p00[0], p00[1], p01[0], p01[1],
                           p10[0], p10[1], p11[0], p11[1],
                           &x, &y);
-        f_in_pts[i][0] = x;
-        f_in_pts[i][1] = y;
-        in_pts[i][0] = float_to_coord(x);
-        in_pts[i][1] = float_to_coord(y);
+        in_pts[i][0] = x;
+        in_pts[i][1] = y;
     }
 
     // Recalculate extra star points.
     // XXX write me
+#else
+    for (size_t i = 0; i < 6; i++)
+        anim_state_update(&anim_states[i]);
+    memcpy(points, anim_states[0].points, sizeof points);
+    memcpy(in_pts, anim_states[0].in_pts, sizeof in_pts);
+    star_opacity = 255 * anim_states[0].opacity;
+#endif
 }
 
 #define INST_DELAY_MSEC 2500
@@ -1409,7 +1627,7 @@ static void draw_instructions(pixtile *tile, const mode_settings *mode)
         for (int x = x0; x < x1; x++) {
             coord alpha = (*pixmap)[y - y0][x - x0];
             alpha = coord_product(alpha, opacity);
-            blend_pixel_unclipped(tile, x, y, color, alpha);
+            blend_pixel_unclipped_co(tile, x, y, color, alpha);
         }
     }
 }
@@ -1417,8 +1635,8 @@ static void draw_instructions(pixtile *tile, const mode_settings *mode)
 static void draw_tile(pixtile *tile)
 {
     const mode_settings *mode = &demo_modes[current_mode];
-    draw_instructions(tile, mode);
     (*mode->op)(tile, mode);
+    draw_instructions(tile, mode);
 }
 
 static void draw_frame(void)
@@ -1485,9 +1703,13 @@ static void setup(void)
 
     setup_button();
 
+#if 0
     // Start star at center of screen.
     center[0] = int_to_coord(SCREEN_WIDTH / 2);
     center[1] = int_to_coord(SCREEN_HEIGHT / 2);
+#else
+    setup_animation();
+#endif
 }
 
 volatile float xtrnangle = 2.222;
