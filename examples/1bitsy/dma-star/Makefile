@@ -27,9 +27,14 @@ LDLIBS   := -lm
 LDSCRIPT := stm32f4-1bitsy.ld
 
 V        := 1
+CFLAGS :=
 include ../Makefile.include
 CPPFLAGS += -I.
-CFLAGS   := $(filter-out -O%, $(CFLAGS)) -O0 -Werror
+OPT      := -O3
+cflags   := $(filter_out -O%, $(CFLAGS)) -Werror
+CFLAGS    = $(cflags) $(OPT)
+
+video.o: OPT = -O0
 
 dma-star.o: pixmaps.h
 
