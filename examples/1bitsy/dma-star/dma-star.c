@@ -357,185 +357,6 @@ static void fill_trapezoid_unclipped(pixtile *tile,
     }
 }
 
-
-#if 0
-static void fill_trapezoid(pixtile *tile,
-                           coord xl0, coord xr0, coord y0,
-                           coord xl1, coord xr1, coord y1,
-                           uint16_t color)
-{
-    assert(y0 <= y1);
-    assert(xl0 <= xr0);
-    assert(xl1 <= xr1);
-
-    // Clip top and bottom.
-    coord min_y = int_to_coord(tile->y);
-    coord max_y = int_to_coord(tile->y + tile->height);
-    if (y0 < min_y) {
-        xl0 = project_y_to_line(min_y, xl0, y0, xl1, y1);
-        xr0 = project_y_to_line(min_y, xr0, y0, xr1, y1);
-        y0 = min_y;
-    }
-    if (y1 >= max_y) {
-        xl1 = project_y_to_line(max_y, xl0, y0, xl1, y1);
-        xr1 = project_y_to_line(max_y, xr0, y0, xr1, y1);
-        y1 = max_y;
-    }
-
-    coord dy = y1 - y0;
-    coord dxl = xl1 - xl0;
-    coord dxr = xr1 - xr0;
-    int iy0 = coord_to_int(y0);
-    int iy1 = coord_to_int(y1);
-    for (int iy = iy0; iy < iy1; iy++) {
-        int xl = xl0 + coord_quotient((iy - iy0) * dxl, dy);
-        int xr = xr0 + coord_quotient((iy - iy0) * dxr, dy);
-        int ixl = MAX(0, coord_to_int(xl));
-        int ixr = MIN(PIXTILE_WIDTH,coord_to_int(xr));
-        for (int ix = ixl; ix < ixr; ix++)
-            tile->pixels[iy - tile->y][ix] = color;
-    }
-}
-#endif
-
-#if 0
-static void fill_trapezoid_aa_unclipped(pixtile *tile,
-                                        float xl0, float xr0, float y0,
-                                        float xl1, float xr1, float y1,
-                                        rgb888 color)
-{
-    // verify points ordered left-to-right, top-to-bottom and clipped.
-    assert(0 <= xl0 && xl0 <= xr0 && xr0 <= PIXTILE_WIDTH);
-    assert(0 <= xl1 && xl1 <= xr1 && xr1 <= PIXTILE_WIDTH);
-    assert(tile->y <= y0 && y0 <= y1 && y1 <= tile->y + tile->height);
-
-    // rgb565 c565 = pack_color(color);
-    // Axes are inverted: x = m * y + b
-    float ml = (xl1 - xl0) / (y1 - y0);
-    float mr = (xr1 - xr0) / (y1 - y0);
-    float bl = xl0 - ml * y0;
-    float br = xr0 - mr * y0;
-    float tril = 0.5 / ml;      // ratio of triangle area to width
-    float trir = 0.5 / mr;
-
-    int iy = FLOOR(y0);
-    int ixl = FLOOR(xl0);
-    int ixr = FLOOR(xr0);
-    float xl = ml * iy + bl;
-    float xr = mr * iy + br;
-    float nxl, nxr;
-    while (iy < y1) {
-        bool s2 = true;
-        nxl = ml * (iy + 1) + bl;
-        nxr = mr * (iy + 1) + br;
-        if (ml >= 0) {
-            while (nxl > ixl + 1 && ixl < xl1) {
-                float cover;
-                if (s2) {
-                    float w = xl - ixl - 1;
-                    cover = tril * w * w;
-                } else {
-                    cover = FRAC((ixl + 0.5 - bl) / ml);
-                }
-                assert(cover <= 1);
-                cover = MAX(0, MIN(1, cover));
-                // blend_pixel_unclipped(tile, ixl, iy, color, float_to_coord(cover));
-                ixl++;
-                s2 = false;
-            }
-            float cover;
-            if (xl < ixl) {
-                float w = nxl - ixl;
-                cover = 1 - tril * w * w;
-            } else
-                cover = FRAC(ml * (iy + 0.5) + bl);
-            assert(cover <= 1);
-            cover = MAX(0, MIN(1, cover));
-            blend_pixel_unclipped(tile, ixl, iy, color, float_to_coord(cover));
-        } else {
-            while (nxl < ixl) {
-                float cover;
-                if (s2) {
-                    // N.B., tri < 0
-                    float w = xl - ixl;
-                    cover = 1 + tril * w * w;
-                } else
-                    cover = 1 - FRAC((ixl + 0.5 - bl) / ml);
-                cover = MAX(0, MIN(1, cover));
-                // blend_pixel_unclipped(tile, ixl, iy, color, float_to_coord(cover));
-                ixl--;
-                s2 = false;
-            }
-            float cover;
-            if (xl > ixl + 1) {
-                float w = ixl + 1 - nxl;
-                cover = -tril * w * w;
-            } else
-                cover = 1 - FRAC(ml * (iy + 0.5) + bl);
-            cover = MAX(0, MIN(1, cover));
-            // blend_pixel_unclipped(tile, ixl, iy, color, float_to_coord(cover));
-        }
-
-        if (mr >= 0) {
-            while (nxr > ixr + 1) {
-                float cover;
-                if (s2) {
-                    float w = xr - ixr - 1;
-                    cover = trir * w * w;
-                } else {
-                    cover = FRAC((ixr + 0.5 - br) / mr);
-                }
-                cover = MAX(0, MIN(1, cover));
-                // blend_pixel_unclipped(tile, ixr, iy, color, float_to_coord(cover));
-                ixr++;
-                s2 = false;
-            }
-            float cover;
-            if (xr < ixr) {
-                float w = nxr - ixr;
-                cover = 1 - trir * w * w; // XXX XXX XXX XXX
-            } else {
-                cover = FRAC(mr * (iy + 0.5) + br);
-            }
-            cover = MAX(0, MIN(1, cover));
-            // blend_pixel_unclipped(tile, ixr, iy, color, float_to_coord(cover));
-        } else {
-            while (nxr < ixr) {
-                float cover;
-                if (s2) {
-                    // N.B., tri < 0
-                    float w = xr - ixr;
-                    cover = 1 + trir * w * w;
-                } else {
-                    cover = 1 - FRAC((ixr + 0.5 - br) / mr);
-                }
-                cover = MAX(0, MIN(1, cover));
-                // blend_pixel_unclipped(tile, ixr, iy, color, float_to_coord(cover));
-                ixr--;
-                s2 = false;
-            }
-            float cover;
-            if (xr > ixr + 1) {
-                float w = ixr + 1 - nxr;
-                cover = -trir * w * w;
-            } else
-                cover = 1 - FRAC(mr * (iy + 0.5) + br);
-            cover = MAX(0, MIN(1, cover));
-            // blend_pixel_unclipped(tile, ixr, iy, color, float_to_coord(cover));
-        }
-
-        // rgb565 *row = tile->pixels[iy - tile->y];
-        // for (int ix = ixl + 1; ix < ixr; ix++)
-        //     row[ix] = c565;
-
-        iy++;
-    }
-}
-
-#endif
-
-#if 1
-
 static void fill_trapezoid_aa_unclipped(pixtile *tile,
                                         const trapezoid *z,
                                         rgb888 color, uint8_t alpha)
@@ -671,7 +492,9 @@ static void fill_trapezoid_aa_unclipped(pixtile *tile,
             if (pal > 0)
                 blend_pixel_unclipped(tile, pixl, iy, color, pal * alpha >> 8);
             if (fill_alpha > 0)
-                blend_pixel_span_unclipped(tile, fixl, fixr, iy, color, fill_alpha * alpha >> 8);
+                blend_pixel_span_unclipped(tile,
+                                           fixl, fixr, iy,
+                                           color, fill_alpha * alpha >> 8);
             if (par > 0)
                 blend_pixel_unclipped(tile, pixr, iy, color, par * alpha >> 8);
         }
@@ -688,8 +511,6 @@ static void fill_trapezoid_aa_unclipped(pixtile *tile,
         }
     }
 }
-
-#endif
 
 static float intersect_trapezoid_left_with_x(const trapezoid *z, float x)
 {
@@ -1140,86 +961,6 @@ static void fill_triangle_aa(pixtile *tile,
                              float verts[3][2],
                              rgb888 color, uint8_t alpha)
 {
-#if 0
-    coord x0, y0, x1, y1, x2, y2;
-    trapezoid *z;
-
-    // sort vertices by y.
-    if (verts[0][1] <= verts[1][1]) {
-        if (verts[0][1] <= verts[2][1]) {
-            if (verts[1][1] <= verts[2][1]) {
-                // v0 <= v1 <= v2
-                x0 = verts[0][0]; y0 = verts[0][1];
-                x1 = verts[1][0]; y1 = verts[1][1];
-                x2 = verts[2][0]; y2 = verts[2][1];
-            } else {
-                // v0 <= v2 < v1
-                x0 = verts[0][0]; y0 = verts[0][1];
-                x1 = verts[2][0]; y1 = verts[2][1];
-                x2 = verts[1][0]; y2 = verts[1][1];
-            }
-        } else {
-            // v2 < v0 < v1
-            x0 = verts[2][0]; y0 = verts[2][1];
-            x1 = verts[0][0]; y1 = verts[0][1];
-            x2 = verts[1][0]; y2 = verts[1][1];
-        }
-    } else {
-        // v1 < v0
-        if (verts[2][1] <= verts[1][1]) {
-            // v2 <= v1 < v0
-            x0 = verts[2][0]; y0 = verts[2][1];
-            x1 = verts[1][0]; y1 = verts[1][1];
-            x2 = verts[0][0]; y2 = verts[0][1];
-        } else {
-            // v1 < v0, v1 < v2
-            if (verts[0][1] <= verts[2][1]) {
-                // v1 < v0 <= v2
-                x0 = verts[1][0]; y0 = verts[1][1];
-                x1 = verts[0][0]; y1 = verts[0][1];
-                x2 = verts[2][0]; y2 = verts[2][1];
-            } else {
-                // v1 < v2 < v0
-                x0 = verts[1][0]; y0 = verts[1][1];
-                x1 = verts[2][0]; y1 = verts[2][1];
-                x2 = verts[0][0]; y2 = verts[0][1];
-            }
-        }
-    }
-
-    coord px1 = project_y_to_line(y1, x0, y0, x2, y2);
-
-    float fx0 = coord_to_float(x0), fy0 = coord_to_float(y0);
-    float fx1 = coord_to_float(x1), fy1 = coord_to_float(y1);
-    float fx2 = coord_to_float(x2), fy2 = coord_to_float(y2);
-    float fpx1 = coord_to_float(px1);
-    
-    float fxl1 = (px1 < x1) ? fpx1 : fx1;
-    float fxr1 = (px1 < x1) ? fx1 : fpx1;
-    trapezoid zoids[5];
-    z = zoids;
-
-    if (fy0 != fy1) {
-        z->xl0 = fx0;
-        z->xr0 = fx0;
-        z->y0  = fy0;
-        z->xl1 = fxl1;
-        z->xr1 = fxr1;
-        z->y1  = fy1;
-        z++;
-    }
-
-    if (fy1 != fy2) {
-        z->xl0 = fxl1;
-        z->xr0 = fxr1;
-        z->y0  = fy1;
-        z->xl1 = fx2;
-        z->xr1 = fx2;
-        z->y1  = fy2;
-        z++;
-    }
-
-#else
     float x0, y0, x1, y1, x2, y2;
 
     // sort vertices by y.
@@ -1292,7 +1033,6 @@ static void fill_triangle_aa(pixtile *tile,
         z->y1  = y2;
         z++;
     }
-#endif
 
     size_t n = z - zoids;
     n = clip_trapezoids(tile, zoids, n);
@@ -1467,7 +1207,9 @@ static const mode_settings demo_modes[] = {
 };
 static const size_t mode_count = (&demo_modes)[1] - demo_modes;
 
+// Inputs: rotation, velocity, edges
 // Outputs: points, in_pts, angle, star_opacity
+// Put those into an anim_state structure.
 
 static void animate(void)
 {
