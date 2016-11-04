@@ -1,4 +1,4 @@
-//#define MOVE
+#define MOVE
 #define OUTER_CLIP
 
 #include <assert.h>
@@ -289,6 +289,13 @@ project_y_to_line(coord y, coord x0, coord y0, coord x1, coord y1)
         return x0;
     return x0 + coord_quotient(coord_product(y - y0, x1 - x0), y1 - y0);
 }
+static inline float
+project_y_to_line_f(float y, float x0, float y0, float x1, float y1)
+{
+    if (y1 == y0)
+        return x0;
+    return x0 + (y - y0) * (x1 - x0) / (y1 - y0);
+}
 
 static inline void line_intersection(float x00, float y00, float x01, float y01,
                                      float x10, float y10, float x11, float y11,
@@ -320,6 +327,38 @@ static inline void line_intersection(float x00, float y00, float x01, float y01,
     }    
 }
 
+typedef struct trapezoid {
+    float xl0, xr0, y0;
+    float xl1, xr1, y1;
+} trapezoid;
+
+static void fill_trapezoid_unclipped(pixtile *tile,
+                                     const trapezoid *z,
+                                     rgb888 color)
+{
+    float xl0 = z->xl0;
+    float xr0 = z->xr0;
+    float y0  = z->y0;
+    float xl1 = z->xl1;
+    float xr1 = z->xr1;
+    float y1  = z->y1;
+
+    float dy  = y1 - y0;
+    float dxl = xl1 - xl0;
+    float dxr = xr1 - xr0;
+    int   iy0 = (int)y0;
+    int   iy1 = (int)y1;
+
+    for (int iy = iy0; iy < iy1; iy++) {
+        int ixl = xl0 + (iy - iy0) * dxl / dy;
+        int ixr = xr0 + (iy - iy0) * dxr / dy;
+        for (int ix = ixl; ix < ixr; ix++)
+            tile->pixels[iy - tile->y][ix] = color;
+    }
+}
+
+
+#if 0
 static void fill_trapezoid(pixtile *tile,
                            coord xl0, coord xr0, coord y0,
                            coord xl1, coord xr1, coord y1,
@@ -357,6 +396,7 @@ static void fill_trapezoid(pixtile *tile,
             tile->pixels[iy - tile->y][ix] = color;
     }
 }
+#endif
 
 #if 0
 static void fill_trapezoid_aa_unclipped(pixtile *tile,
@@ -494,16 +534,11 @@ static void fill_trapezoid_aa_unclipped(pixtile *tile,
 
 #endif
 
-typedef struct trapezoid {
-    float xl0, xr0, y0;
-    float xl1, xr1, y1;
-} trapezoid;
-
 #if 1
 
 static void fill_trapezoid_aa_unclipped(pixtile *tile,
                                         const trapezoid *z,
-                                        rgb888 color)
+                                        rgb888 color, uint8_t alpha)
 {
     const float xl0 = z->xl0;
     const float xr0 = z->xr0;
@@ -518,19 +553,21 @@ static void fill_trapezoid_aa_unclipped(pixtile *tile,
     assert(dy >= 0);
     int   incl = (dxl < 0) ? -1 : +1;
     int   incr = (dxr < 0) ? -1 : +1;
-    float half_incl = (dxl < 0) ? -0.5 : +0.5;
-    float half_incr = (dxr < 0) ? -0.5 : +0.5;
+    // float half_incl = (dxl < 0) ? -0.5 : +0.5;
+    // float half_incr = (dxr < 0) ? -0.5 : +0.5;
+    int   comp_l    = (dxl < 0) ? ~0 : 0;
+    int   comp_r    = (dxr < 0) ? ~0 : 0;
 
-    const bool steepl = ABS(dxl) > ABS(dy);
-    const bool steepr = ABS(dxr) > ABS(dy);
+    const bool steepl = ABS(dxl) > dy;
+    const bool steepr = ABS(dxr) > dy;
     int interp_l, gradient_l, alpha_l0;
     int interp_r, gradient_r, alpha_r0;
     if (steepl) {
         // X axis changes faster
         float m  = dy / dxl;
-        interp_l   = (int)(65536.0 * (y0 + m * ((int)xl0 + half_incl - xl0)));
-        gradient_l = (int)(65536.0 * m);
-        alpha_l0    = interp_l >> 8 & 0xFF;
+        interp_l   = (int)(65536.0 * (y0 + m * ((int)xl0 - xl0 + 0.5)));
+        gradient_l = (int)(65536.0 * ABS(m));
+        alpha_l0    = (interp_l ^ comp_l) >> 8 & 0xFF;
     } else {
         // Y axis changes faster.
         const float m = dxl / dy;
@@ -541,9 +578,9 @@ static void fill_trapezoid_aa_unclipped(pixtile *tile,
     if (steepr) {
         // X axis changes faster
         float m  = dy / dxr;
-        interp_r   = (int)(65536.0 * (y0 + m * ((int)xr0 + half_incr - xr0)));
-        gradient_r = (int)(65536.0 * m);
-        alpha_r0    = 0xFF - (interp_r >> 8 & 0xFF);
+        interp_r   = (int)(65536.0 * (y0 + m * ((int)xr0 - xr0 + 0.5)));
+        gradient_r = (int)(65536.0 * ABS(m));
+        alpha_r0    = 0xFF - ((interp_r ^ comp_r) >> 8 & 0xFF);
     } else {
         // Y axis changes faster.
         const float m = dxr / dy;
@@ -559,6 +596,7 @@ static void fill_trapezoid_aa_unclipped(pixtile *tile,
     const int ixl1 = (int)xl1;
     const int ixr1 = (int)xr1;
     const int iy1  = (int)(y1 - 0.0001);
+    // const int cy1  = CEIL(y1);
     int       ixl  = (int)xl0;
     int       ixr  = (int)xr0;
     int       iy   = (int)y0;
@@ -577,12 +615,12 @@ static void fill_trapezoid_aa_unclipped(pixtile *tile,
                 fix2 = ixl + 1;
                 pal = alpha_l;
                 interp_l += gradient_l;
-                alpha_l = interp_l >> 8 & 0xFF;
+                alpha_l = (interp_l ^ comp_l) >> 8 & 0xFF;
                 iyt = interp_l >> 16;
                 ixl += incl;
-                if (iyt != iy || ixl == ixl1 + incl)
+                if (iyt != iy || incl * (ixl - ixl1) > comp_l)
                     break;
-                blend_pixel_unclipped(tile, pixl, iyt, color, pal);
+                blend_pixel_unclipped(tile, pixl, iyt, color, pal * alpha >> 8);
                 // pixel(pixl, iyt, pal);
             }
             if (incl == +1)
@@ -604,12 +642,12 @@ static void fill_trapezoid_aa_unclipped(pixtile *tile,
                 fix2 = ixr + 1;
                 par = alpha_r;
                 interp_r += gradient_r;
-                alpha_r = 0xFF - (interp_r >> 8 & 0xFF);
+                alpha_r = 0xFF - ((interp_r ^ comp_r) >> 8 & 0xFF);
                 iyt = interp_r >> 16;
                 ixr += incr;
-                if (iyt != iy || ixr == ixr1 + incr)
+                if (iyt != iy || incr * (ixr - ixr1) > comp_r)
                     break;
-                blend_pixel_unclipped(tile, pixr, iyt, color, par);
+                blend_pixel_unclipped(tile, pixr, iyt, color, par * alpha >> 8);
                 // pixel(pixr, iyt, par);
             }
             if (incr == -1)
@@ -627,24 +665,24 @@ static void fill_trapezoid_aa_unclipped(pixtile *tile,
             // (1 - a) = (1 - pal) - (1 - par)
             int a = MAX(0, pal + par - 0xFF);
             if (a > 0)
-                blend_pixel_unclipped(tile, pixl, iy, color, a);
+                blend_pixel_unclipped(tile, pixl, iy, color, a * alpha >> 8);
             
         } else if (pixl < pixr) {
             if (pal > 0)
-                blend_pixel_unclipped(tile, pixl, iy, color, pal);
+                blend_pixel_unclipped(tile, pixl, iy, color, pal * alpha >> 8);
             if (fill_alpha > 0)
-                blend_pixel_span_unclipped(tile, fixl, fixr, iy, color, fill_alpha);
+                blend_pixel_span_unclipped(tile, fixl, fixr, iy, color, fill_alpha * alpha >> 8);
             if (par > 0)
-                blend_pixel_unclipped(tile, pixr, iy, color, par);
+                blend_pixel_unclipped(tile, pixr, iy, color, par * alpha >> 8);
         }
-        // pixel(pixl, iy, pal);
-        // pixel(pixr, iy, par);
-        // fill(fixl, iy, fill_alpha);
-        // XXX replace fill with something better.
         if (++iy == iy1) {
-            fill_alpha = 0xFF * FRAC(y1);
+            // fill_alpha = 0xFF * (1 - FRAC(y1));
+            fill_alpha = 0xFF * (y1 - iy1);
+            if (xl1 != xr1)
+                fill_alpha = 0xFF; // XXX hack!
             unfill_alpha = 0xFF - fill_alpha;
             alpha_l = MAX(0, alpha_l - unfill_alpha);
+
         } else {
             fill_alpha = 0xFF;
         }
@@ -765,7 +803,7 @@ static size_t clip_trapezoids_min_x(trapezoid *zoids, size_t n, float min_x)
             nz->y0  = ny;
             nz->xl0 = min_x;
             nz->xr0 = nx;
-            nz->xl1 = min_x;
+            nz->xl1 = z->xl1;
             nz->xr1 = z->xr1;
             nz->y1  = z->y1;
 
@@ -1014,9 +1052,9 @@ static size_t clip_trapezoids(pixtile *tile, trapezoid z[5], size_t n)
     return n;
 }
 
-static void fill_triangle(pixtile *tile, coord verts[3][2], uint16_t color)
+static void fill_triangle(pixtile *tile, float verts[3][2], uint16_t color)
 {
-    coord x0, y0, x1, y1, x2, y2;
+    float x0, y0, x1, y1, x2, y2;
 
     // sort vertices by y.
     if (verts[0][1] <= verts[1][1]) {
@@ -1061,16 +1099,48 @@ static void fill_triangle(pixtile *tile, coord verts[3][2], uint16_t color)
         }
     }
 
-    coord px1 = project_y_to_line(y1, x0, y0, x2, y2);
+    float px1 = project_y_to_line_f(y1, x0, y0, x2, y2);
 
-    coord xl1 = (px1 < x1) ? px1 : x1;
-    coord xr1 = (px1 < x1) ? x1 : px1;
-    fill_trapezoid(tile, x0, x0, y0, xl1, xr1, y1, color);
-    fill_trapezoid(tile, xl1, xr1, y1, x2, x2, y2, color);
+    float xl1 = (px1 < x1) ? px1 : x1;
+    float xr1 = (px1 < x1) ? x1 : px1;
+
+    trapezoid zoids[5];
+    trapezoid *z = zoids;
+
+    if (y0 != y1) {
+        z->xl0 = x0;
+        z->xr0 = x0;
+        z->y0  = y0;
+        z->xl1 = xl1;
+        z->xr1 = xr1;
+        z->y1  = y1;
+        z++;
+    }
+
+    if (y1 != y2) {
+        z->xl0 = xl1;
+        z->xr0 = xr1;
+        z->y0  = y1;
+        z->xl1 = x2;
+        z->xr1 = x2;
+        z->y1  = y2;
+        z++;
+    }
+
+    size_t n = z - zoids;
+    n = clip_trapezoids(tile, zoids, n);
+    for (size_t i = 0; i < n; i++)
+        fill_trapezoid_unclipped(tile, &zoids[i], color);
+
+    // fill_trapezoid(tile, x0, x0, y0, xl1, xr1, y1, color);
+    // fill_trapezoid(tile, xl1, xr1, y1, x2, x2, y2, color);
 }                          
 
-static void fill_triangle_aa(pixtile *tile, coord verts[3][2], rgb888 color)
+static void fill_triangle_aa(pixtile *tile,
+                             float verts[3][2],
+                             rgb888 color, uint8_t alpha)
 {
+#if 0
     coord x0, y0, x1, y1, x2, y2;
     trapezoid *z;
 
@@ -1126,10 +1196,6 @@ static void fill_triangle_aa(pixtile *tile, coord verts[3][2], rgb888 color)
     
     float fxl1 = (px1 < x1) ? fpx1 : fx1;
     float fxr1 = (px1 < x1) ? fx1 : fpx1;
-#if 0
-    fill_trapezoid_aa_unclipped(tile, fx0, fx0, fy0, fxl1, fxr1, fy1, color);
-    fill_trapezoid_aa_unclipped(tile, fxl1, fxr1, fy1, fx2, fx2, fy2, color);
-#else
     trapezoid zoids[5];
     z = zoids;
 
@@ -1153,20 +1219,87 @@ static void fill_triangle_aa(pixtile *tile, coord verts[3][2], rgb888 color)
         z++;
     }
 
+#else
+    float x0, y0, x1, y1, x2, y2;
+
+    // sort vertices by y.
+    if (verts[0][1] <= verts[1][1]) {
+        if (verts[0][1] <= verts[2][1]) {
+            if (verts[1][1] <= verts[2][1]) {
+                // v0 <= v1 <= v2
+                x0 = verts[0][0]; y0 = verts[0][1];
+                x1 = verts[1][0]; y1 = verts[1][1];
+                x2 = verts[2][0]; y2 = verts[2][1];
+            } else {
+                // v0 <= v2 < v1
+                x0 = verts[0][0]; y0 = verts[0][1];
+                x1 = verts[2][0]; y1 = verts[2][1];
+                x2 = verts[1][0]; y2 = verts[1][1];
+            }
+        } else {
+            // v2 < v0 < v1
+            x0 = verts[2][0]; y0 = verts[2][1];
+            x1 = verts[0][0]; y1 = verts[0][1];
+            x2 = verts[1][0]; y2 = verts[1][1];
+        }
+    } else {
+        // v1 < v0
+        if (verts[2][1] <= verts[1][1]) {
+            // v2 <= v1 < v0
+            x0 = verts[2][0]; y0 = verts[2][1];
+            x1 = verts[1][0]; y1 = verts[1][1];
+            x2 = verts[0][0]; y2 = verts[0][1];
+        } else {
+            // v1 < v0, v1 < v2
+            if (verts[0][1] <= verts[2][1]) {
+                // v1 < v0 <= v2
+                x0 = verts[1][0]; y0 = verts[1][1];
+                x1 = verts[0][0]; y1 = verts[0][1];
+                x2 = verts[2][0]; y2 = verts[2][1];
+            } else {
+                // v1 < v2 < v0
+                x0 = verts[1][0]; y0 = verts[1][1];
+                x1 = verts[2][0]; y1 = verts[2][1];
+                x2 = verts[0][0]; y2 = verts[0][1];
+            }
+        }
+    }
+
+    float px1 = project_y_to_line_f(y1, x0, y0, x2, y2);
+
+    float xl1 = (px1 < x1) ? px1 : x1;
+    float xr1 = (px1 < x1) ? x1 : px1;
+
+    trapezoid zoids[5];
+    trapezoid *z = zoids;
+
+    if (y0 != y1) {
+        z->xl0 = x0;
+        z->xr0 = x0;
+        z->y0  = y0;
+        z->xl1 = xl1;
+        z->xr1 = xr1;
+        z->y1  = y1;
+        z++;
+    }
+
+    if (y1 != y2) {
+        z->xl0 = xl1;
+        z->xr0 = xr1;
+        z->y0  = y1;
+        z->xl1 = x2;
+        z->xr1 = x2;
+        z->y1  = y2;
+        z++;
+    }
+#endif
+
     size_t n = z - zoids;
     n = clip_trapezoids(tile, zoids, n);
-#if 1
     for (size_t i = 0; i < n; i++) {
         z = &zoids[i];
-        fill_trapezoid_aa_unclipped(tile, z, color);
-                                    // z->xl0, z->xr0, z->y0,
-                                    // z->xl1, z->xr1, z->y1,
-                                    // color);
+        fill_trapezoid_aa_unclipped(tile, z, color, alpha);
     }
-#else
-    (void)color;
-#endif
-#endif
 }
 
 
@@ -1176,10 +1309,10 @@ static void fill_triangle_aa(pixtile *tile, coord verts[3][2], rgb888 color)
 #define STAR_RADIUS   (0.44 * MIN(SCREEN_HEIGHT, SCREEN_WIDTH))
 #define FG_COLOR      0xffff
 #define BG_COLOR      0x0802
-#define CENTER_X_MIN (STAR_RADIUS - 20)
-#define CENTER_X_MAX (SCREEN_WIDTH - STAR_RADIUS + 20)
-#define CENTER_Y_MIN (STAR_RADIUS - 20)
-#define CENTER_Y_MAX (SCREEN_HEIGHT - STAR_RADIUS + 20)
+#define CENTER_X_MIN (STAR_RADIUS - 50)
+#define CENTER_X_MAX (SCREEN_WIDTH - STAR_RADIUS + 50)
+#define CENTER_Y_MIN (STAR_RADIUS - 50)
+#define CENTER_Y_MAX (SCREEN_HEIGHT - STAR_RADIUS + 50)
 #define INST_Y       (SCREEN_HEIGHT - 25)
 
 typedef enum drawing_mode {
@@ -1194,12 +1327,14 @@ typedef enum drawing_mode {
 } drawing_mode;
 
 static drawing_mode current_mode;
-static drawing_mode new_mode = 3;
+static drawing_mode new_mode;
 static uint32_t mode_start_msec;
 
-static float angle = 0.0;
+static float angle = 0.2;
 static coord points[5][2];
+static float fpoints[5][2];
 static coord in_pts[5][2];
+static coord f_in_pts[5][2];
 static coord center[2];
 static int star_opacity = 0;
 
@@ -1231,28 +1366,26 @@ static void fill_star(pixtile *tile, rgb888 color)
     for (size_t i = 0; i < 5; i++) {
         size_t j = (i + 3) % 5;
         size_t k = (i + 4) % 5;
-        coord tri_pts[3][2] = {
-            { points[i][0], points[i][1] },
-            { in_pts[j][0], in_pts[j][1] },
-            { in_pts[k][0], in_pts[k][1] },
+        float tri_pts[3][2] = {
+            { fpoints[i][0], fpoints[i][1] },
+            { f_in_pts[j][0], f_in_pts[j][1] },
+            { f_in_pts[k][0], f_in_pts[k][1] },
         };
         fill_triangle(tile, tri_pts, pcolor);
-        break;
     }
 }
 
-static void fill_star_aa(pixtile *tile, rgb888 color)
+static void fill_star_aa(pixtile *tile, rgb888 color, uint8_t alpha)
 {
     for (size_t i = 0; i < 5; i++) {
         size_t j = (i + 3) % 5;
         size_t k = (i + 4) % 5;
-        coord tri_pts[3][2] = {
-            { points[i][0], points[i][1] },
-            { in_pts[j][0], in_pts[j][1] },
-            { in_pts[k][0], in_pts[k][1] },
+        float tri_pts[3][2] = {
+            { fpoints[i][0], fpoints[i][1] },
+            { f_in_pts[j][0], f_in_pts[j][1] },
+            { f_in_pts[k][0], f_in_pts[k][1] },
         };
-        fill_triangle_aa(tile, tri_pts, color);
-        break;
+        fill_triangle_aa(tile, tri_pts, color, alpha);
     }
 }
 
@@ -1298,21 +1431,28 @@ static void draw_filled(pixtile *tile, const mode_settings *mode)
 
 static void draw_filled_aa(pixtile *tile, const mode_settings *mode)
 {
-    fill_star_aa(tile, mode->fg_color);
+    fill_star_aa(tile, mode->fg_color, 0xFF);
 }
 
 static void draw_filled_fa(pixtile *tile, const mode_settings *mode)
 {
-    (void)tile;
-    (void)mode;
-    // XXX write me
+    int opacity = star_opacity * star_opacity / 255;
+    fill_star_aa(tile, mode->fg_color, opacity);
 }
+
+static const mode_settings demo_modes[];
 
 static void draw_everything(pixtile *tile, const mode_settings *mode)
 {
     (void)tile;
     (void)mode;
-    // XXX write me
+
+    // for (size_t i = 0; ; i++) {
+    //     const mode_settings *mode = &demo_modes[i];
+    //     if (mode->op == draw_everything)
+    //         break;
+    //     mode->op(tile, mode);
+    // }
 }
 
 static const mode_settings demo_modes[] = {
@@ -1322,20 +1462,15 @@ static const mode_settings demo_modes[] = {
     { 0xffffff, 0x0000ff, 0x003333, draw_outline_fa, &pb2fill, TA_FADE    },
     { 0x080018, 0xffff00, 0x00ff00, draw_filled,     &pb2aa,   TA_FADE    },
     { 0x002000, 0xff00ff, 0xffff00, draw_filled_aa,  &pb2fade, TA_FADE    },
-    { 0x000000, 0xffff00, 0x0000ff, draw_filled_fa,  &pb4more, TA_FADE    },
+    { 0x550000, 0x00ffff, 0x0000ff, draw_filled_fa,  &pb4more, TA_FADE    },
     { 0xffffff, 0x110000, 0x223322, draw_everything, &pb4less, TA_RAINBOW },
 };
 static const size_t mode_count = (&demo_modes)[1] - demo_modes;
 
+// Outputs: points, in_pts, angle, star_opacity
+
 static void animate(void)
 {
-    // // Update drawing mode.
-    // static uint32_t next_time = 2000;
-    // if (system_millis >= next_time) {
-    //     new_mode = (drawing_mode + 1) % DRAWING_MODE_COUNT;
-    //     next_time += 2000;
-    // }
-
     if (new_mode != current_mode) {
         current_mode = new_mode;
         video_set_bg_color(pack_color(demo_modes[current_mode].bg_color), true);
@@ -1386,7 +1521,6 @@ static void animate(void)
     }
 
     // Recalculate star points.
-    float fpoints[5][2];
 
     for (size_t i = 0; i < 5; i++) {
         float a = angle + i * 360 / 5 * M_PI / 180;
@@ -1404,6 +1538,8 @@ static void animate(void)
         line_intersection(p00[0], p00[1], p01[0], p01[1],
                           p10[0], p10[1], p11[0], p11[1],
                           &x, &y);
+        f_in_pts[i][0] = x;
+        f_in_pts[i][1] = y;
         in_pts[i][0] = float_to_coord(x);
         in_pts[i][1] = float_to_coord(y);
     }
