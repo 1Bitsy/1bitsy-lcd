@@ -92,13 +92,16 @@ static inline rgb565 blend_to_black(rgb565 color, uint8_t alpha)
     // uint32_t r8 = r5 << 3 | r5 >> 2;
     // uint32_t g8 = g6 << 2 | g6 >> 4;
     // uint32_t b8 = b5 << 3 | b5 >> 2;
-    uint32_t r8 = r5 << 3;
-    uint32_t g8 = g6 << 2;
-    uint32_t b8 = b5 << 3;
-    r8 *= alpha; r8 >>= 8;
-    g8 *= alpha; g8 >>= 8;
-    b8 *= alpha; b8 >>= 8;
-    return (r8 << 8 & 0xf800) | (g8 << 3 & 0x07e0) | (b8 >> 3 & 0x001f);
+    // uint32_t r8 = r5 << 3;
+    // uint32_t g8 = g6 << 2;
+    // uint32_t b8 = b5 << 3;
+    // r8 *= alpha; r8 >>= 8;
+    // g8 *= alpha; g8 >>= 8;
+    // b8 *= alpha; b8 >>= 8;
+    r5 *= alpha; r5 >>= 5;
+    g6 *= alpha; g6 >>= 6;
+    b5 *= alpha; b5 >>= 5;
+    return (r5 << 8 & 0xf800) | (g6 << 3 & 0x07e0) | (b5 >> 3 & 0x001f);
 }
 
 // XXX fast path when alpha == 0 or alpha == opaque.
@@ -1246,7 +1249,7 @@ static void draw_background(pixtile *tile)
     static int inc = +1;
 
     if (tile->y == 0) {
-        bg_offset = (bg_offset + 1) % BG_PIXMAP_WIDTH;
+        bg_offset = (bg_offset + 5) % BG_PIXMAP_WIDTH;
         alpha += inc;
         if (alpha > 0xFF) {
             alpha = 0x1fe - alpha;

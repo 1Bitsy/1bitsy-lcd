@@ -80,8 +80,8 @@ def by_n(n, seq):
 
 def pack_rgb565(tup):
     return (tup[0] >> 3 << 11 |
-            tup[0] >> 2 <<  5 |
-            tup[0] >> 3 <<  0)
+            tup[1] >> 2 <<  5 |
+            tup[2] >> 3 <<  0)
 
 bg_path = 'pixmaps/water-abstract-water-turquoise-repeating-image.png'
 bg_img = PIL.Image.open(bg_path)
