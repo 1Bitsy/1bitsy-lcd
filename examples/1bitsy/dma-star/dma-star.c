@@ -5,6 +5,7 @@
 #include <math.h>
 #include <string.h>
 
+#include <libopencm3/stm32/flash.h>
 #include <libopencm3/stm32/rcc.h>
 
 #include "coord.h"
@@ -1697,6 +1698,9 @@ static void setup_button(void)
 static void setup(void)
 {
     rcc_clock_setup_hse_3v3(&MY_CLOCK);
+    flash_prefetch_enable();
+    flash_icache_enable();
+    flash_dcache_enable();
 
     setup_systick(MY_CLOCK.ahb_frequency);
     // setup_heartbeat();
