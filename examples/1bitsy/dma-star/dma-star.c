@@ -697,6 +697,9 @@ static size_t clip_trapezoids_min_x(trapezoid *zoids, size_t n, float min_x)
             ny      = intersect_trapezoid_left_with_x(z, min_x);
             nx      = intersect_trapezoid_right_with_y(z, ny);
 
+            // XXX due to rounding error, we can end up with nx < min_x.
+            // XXX in that case, we should discard the trapezoid, I think.
+
             nz->xl0 = min_x;
             nz->xr0 = nx;
             nz->y0  = ny;
