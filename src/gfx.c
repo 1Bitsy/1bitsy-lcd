@@ -1,6 +1,7 @@
 #include <gfx.h>
 
 #include <assert.h>
+#include <stdbool.h>
 
 #include "util.h"
 
@@ -189,56 +190,152 @@ void gfx_draw_line(gfx_pixtile *tile,
 
         // Horizontalish
 
-#if 0
         if (x1 < x0) {
-            coord xt = x0; x0 = x1; x1 = xt;
-            coord yt = y0; y0 = y1; y1 = yt;
+            float xt = x0; x0 = x1; x1 = xt;
+            float yt = y0; y0 = y1; y1 = yt;
         }
-        coord dx = x1 - x0;
-        coord dy = ABS(y1 - y0);
-        coord d = 2 * dy - dx;
-        d -= coord_product(coord_frac(x0), dy);
-        d += coord_product(coord_frac(y0), dx);
-        coord y = y0;
-        coord y_inc = int_to_coord((y1 > y0) ? +1 : -1);
-        for (int ix = coord_to_int(x0); ix <= coord_to_int(x1); ix++) {
-            int iy = coord_to_int(y);
-            if (ix >= min_x && ix < max_x && iy >= min_y && iy < max_y)
-                tile->pixels[iy - min_y][ix] = color;
+        float dx = x1 - x0;
+        float dy = ABS(y1 - y0);
+        float d = 2 * dy - dx;
+        d -= FRAC(x0) * dy;
+        d += FRAC(y0) * dx;
+        float y = y0;
+        float y_inc = (y1 > y0) ? +1.0f : -1.0f;
+        for (int ix = FLOOR(x0); ix <= FLOOR(x1); ix++) {
+            int iy = FLOOR(y);
+            gfx_rgb565 *p = pixel_ptr(tile, ix, iy);
+            if (p)
+                *p = color;
             if (d >= 0) {
                 y += y_inc;
                 d -= dx;
             }
             d += dy;
         }
-#endif
 
     } else {
 
         // Verticalish
 
-#if 0
         if (y1 < y0) {
-           coord xt = x0; x0 = x1; x1 = xt;
-            coord yt = y0; y0 = y1; y1 = yt;
+            float xt = x0; x0 = x1; x1 = xt;
+            float yt = y0; y0 = y1; y1 = yt;
         }
-        coord dy = y1 - y0;
-        coord dx = ABS(x1 - x0);
-        coord d = 2 * dx - dy;
-        d -= coord_product(coord_frac(y0), dx);
-        d += coord_product(coord_frac(x0), dy);
-        coord x = x0;
-        coord x_inc = int_to_coord((x1 > x0) ? +1 : -1);
-        for (int y = coord_to_int(y0); y <= coord_to_int(y1); y++) {
-            int ix = coord_to_int(x);
-            if (y >= min_y && y < max_y && ix >= min_x && ix < max_x)
-                tile->pixels[y - min_y][ix] = color;
+        float dy = y1 - y0;
+        float dx = ABS(x1 - x0);
+        float d = 2 * dx - dy;
+        d -= FRAC(y0) * dx;
+        d += FRAC(x0) * dy;
+        float x = x0;
+        float x_inc = (x1 > x0) ? +1.0f : -1.0f;
+        for (int iy = FLOOR(y0); iy <= FLOOR(y1); iy++) {
+            int ix = FLOOR(x);
+            gfx_rgb565 *p = pixel_ptr(tile, ix, iy);
+            if (p)
+                *p = color;
             if (d >= 0) {
                 x += x_inc;
                 d -= dy;
             }
             d += dx;
         }            
-#endif
     }
 }
+
+// Line, anti-aliased using Xiaolin Wu's algorithm
+void gfx_draw_line_aa(gfx_pixtile *tile,
+                      float x0, float y0,
+                      float x1, float y1,
+                      gfx_rgb888 color)
+{
+    // Cribbed directly from en.wikipedia.org/wiki/Xiaolin_Wu%27s_line_algorithm
+    // XXX Could be optimized by clipping earlier.
+
+    bool steep = ABS(y1 - y0) > ABS(x1 - x0);
+    if (steep) {
+        float t0 = x0; x0 = y0; y0 = t0;
+        float t1 = x1; x1 = y1; y1 = t1;
+    }
+    if (x1 < x0) {
+        float xt = x0; x0 = x1; x1 = xt;
+        float yt = y0; y0 = y1; y1 = yt;
+    }
+    float dx = x1 - x0;
+    float dy = y1 - y0;
+    if (dx == 0)
+        return;                 // x0 == x1, y0 == y1, ∴ no line
+    float gradient = dy / dx;
+
+    // handle first endpoint
+    float xend = ROUND(x0);
+    float yend = y0 + gradient * (xend - x0);
+    float xgap = 255.0f * RFRAC(x0 + 0.5f);
+    int xpxl1 = xend;
+    int ypxl1 = FLOOR(yend);
+    if (steep) {
+        gfx_rgb565 *p = pixel_ptr(tile, ypxl1, xpxl1);
+        if (p)
+            *p = blend_pixel(*p, color, RFRAC(yend) * xgap);
+        p = pixel_ptr(tile, ypxl1 + 1, xpxl1);
+        if (p)
+            *p = blend_pixel(*p, color, FRAC(yend) * xgap);
+    } else {
+        gfx_rgb565 *p = pixel_ptr(tile, xpxl1, ypxl1);
+        if (p)
+            *p = blend_pixel(*p, color, RFRAC(yend) * xgap);
+        p = pixel_ptr(tile, xpxl1, ypxl1 + 1);
+        if (p)
+            *p = blend_pixel(*p, color, FRAC(yend) * xgap);
+    }
+    float intery = yend + gradient; // first y-intersection for the main loop
+
+    // handle second endpoint
+    xend = ROUND(x1);
+    yend = y1 + gradient * (xend - x1);
+    xgap = 255.0f * FRAC(x1 + 0.5f);
+    int xpxl2 = xend;
+    int ypxl2 = FLOOR(yend);
+    if (steep) {
+        gfx_rgb565 *p = pixel_ptr(tile, ypxl2, xpxl2);
+        if (p)
+            *p = blend_pixel(*p, color, RFRAC(yend) * xgap);
+        p = pixel_ptr(tile, ypxl2 + 1, xpxl2);
+        if (p)
+            *p = blend_pixel(*p, color, FRAC(yend) * xgap);
+    } else {
+        gfx_rgb565 *p = pixel_ptr(tile, xpxl2, ypxl2);
+        if (p)
+            *p = blend_pixel(*p, color, RFRAC(yend) * xgap);
+        p = pixel_ptr(tile, xpxl2, ypxl2 + 1);
+        if (p)
+            *p = blend_pixel(*p, color, FRAC(yend) * xgap);
+    }
+
+    // main loop
+    if (steep) {
+        for (int x = xpxl1 + 1; x < xpxl2; x++) {
+            int y = FLOOR(intery);
+            int f = 256.0f * FRAC(intery);
+            gfx_rgb565 *p = pixel_ptr(tile, y, x);
+            if (p)
+                *p = blend_pixel(*p, color, 255  - f);
+            p = pixel_ptr(tile, y + 1, x);
+            if (p)
+                *p = blend_pixel(*p, color, f);
+            intery += gradient;
+        }
+    } else {
+        for (int x = xpxl1 + 1; x < xpxl2; x++) {
+            int y = FLOOR(intery);
+            int f = 256.0f * FRAC(intery);
+            gfx_rgb565 *p = pixel_ptr(tile, x, y);
+            if (p)
+                *p = blend_pixel(*p, color, 255 - f);
+            p = pixel_ptr(tile, x, y + 1);
+            if (p)
+                *p = blend_pixel(*p, color, f);
+            intery += gradient;
+        }
+    }
+}
+

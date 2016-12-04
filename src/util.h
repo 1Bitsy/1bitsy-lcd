@@ -54,6 +54,11 @@
                                 t >= 0 ? t - (int)t : t + (int)-t;      \
                             })
 
+// FRAC(x) + RFRAC(x) == 1
+#define RFRAC(x)            (1 - FRAC(x))
+
+#define ROUND(x)            FLOOR(x + 0.5)
+
 #endif /* !UTIL_included */
 
 
