@@ -38,6 +38,7 @@ a pixtile.  A pixtile has:
   - an `origin`: integer x and y coordinates for the tile's
     top left corner.
   - a `size`: integer width and height.
+  - a `stride`: number of pixels between rows.
   - `pixels`: memory to store *width* &times; *height* pixels
   
 The pixel format in a pixtile is RGB 565.  Each pixel is 16 bits.
@@ -78,14 +79,14 @@ antialiased edges, without clipping.
 
 ### Verbs
 
-The `verb` is either `fill` or `outline`.  Fill means paint the
-primitive's interior with a solid color.  `outline` draws a roughly
-one pixel wide outline around the primitive.  `outline` emphasizes
+The `verb` is either `fill` or `draw`.  Fill means paint the
+primitive's interior with a solid color.  `draw` draws a roughly
+one pixel wide outline around the primitive.  `draw` emphasizes
 speed over quality.
 
 ### Primitives
 
-There are five primitives at present: `pixel`, `pixel_span`, `line`,
+There are five primitives at present: `pixel`, `span`, `line`,
 `triangle`, and `trapezoid`.  I would like to add primitives for
 circles, ellipses, arcs, aligned rectangles, quadratic and cubic
 beziers, general polygons, and more.  But there are five primitives at
@@ -93,7 +94,7 @@ present.
 
 A `pixel` is a single dot on the screen.
 
-A `pixel_span` is a contiguous span of pixels on a scan line.
+A `span` is a contiguous span of pixels on a scan line.
 
 A `line` is a straight line.  It does not have an interior, so it
 can't be filled, only outlined.
@@ -118,6 +119,7 @@ with a scalar opacity (alpha) value.
 `unclipped` means the primitive will not be clipped to the destination
 pixtile.  The caller guarantees the primitive does not extend outside
 the pixtile; if it does, the program will probably crash.
+
 
 # Video Output
 
