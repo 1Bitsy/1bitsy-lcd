@@ -2,6 +2,8 @@
 
 #include <assert.h>
 
+#include "util.h"
+
 // --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  -
 // Pixels
 
@@ -150,3 +152,93 @@ void gfx_fill_span_blend_unclipped(gfx_pixtile *tile,
     }
 }
 
+// --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  -
+// Lines
+
+
+// Bresenham, jaggy.
+void gfx_draw_line(gfx_pixtile *tile,
+                   float x0, float y0,
+                   float x1, float y1,
+                   gfx_rgb888 color)
+{
+    int min_x = tile->x;
+    int max_x = min_x + tile->w;
+    int min_y = tile->y;
+    int max_y = min_y + tile->h;
+
+    if (y0 == y1) {
+
+        // Horizontal
+
+        gfx_fill_span(tile, (int)x0, (int)x1, (int)y0, color);
+
+    } else if (x0 == x1) {
+
+        // Vertical
+
+        int x = (int)x0;
+        if (min_x <= x && x < max_x) {
+            int first_y = MAX(min_y,     (int)MIN(y0, y1));
+            int last_y  = MIN(max_y - 1, (int)MAX(y0, y1));
+            for (int y = first_y; y <= last_y; y++)
+                *pixel_ptr_unclipped(tile, x, y) = color;
+        }
+
+    } else if (ABS(x1 - x0) >= ABS(y1 - y0)) {
+
+        // Horizontalish
+
+#if 0
+        if (x1 < x0) {
+            coord xt = x0; x0 = x1; x1 = xt;
+            coord yt = y0; y0 = y1; y1 = yt;
+        }
+        coord dx = x1 - x0;
+        coord dy = ABS(y1 - y0);
+        coord d = 2 * dy - dx;
+        d -= coord_product(coord_frac(x0), dy);
+        d += coord_product(coord_frac(y0), dx);
+        coord y = y0;
+        coord y_inc = int_to_coord((y1 > y0) ? +1 : -1);
+        for (int ix = coord_to_int(x0); ix <= coord_to_int(x1); ix++) {
+            int iy = coord_to_int(y);
+            if (ix >= min_x && ix < max_x && iy >= min_y && iy < max_y)
+                tile->pixels[iy - min_y][ix] = color;
+            if (d >= 0) {
+                y += y_inc;
+                d -= dx;
+            }
+            d += dy;
+        }
+#endif
+
+    } else {
+
+        // Verticalish
+
+#if 0
+        if (y1 < y0) {
+           coord xt = x0; x0 = x1; x1 = xt;
+            coord yt = y0; y0 = y1; y1 = yt;
+        }
+        coord dy = y1 - y0;
+        coord dx = ABS(x1 - x0);
+        coord d = 2 * dx - dy;
+        d -= coord_product(coord_frac(y0), dx);
+        d += coord_product(coord_frac(x0), dy);
+        coord x = x0;
+        coord x_inc = int_to_coord((x1 > x0) ? +1 : -1);
+        for (int y = coord_to_int(y0); y <= coord_to_int(y1); y++) {
+            int ix = coord_to_int(x);
+            if (y >= min_y && y < max_y && ix >= min_x && ix < max_x)
+                tile->pixels[y - min_y][ix] = color;
+            if (d >= 0) {
+                x += x_inc;
+                d -= dy;
+            }
+            d += dx;
+        }            
+#endif
+    }
+}
