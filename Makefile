@@ -12,6 +12,11 @@ CFLAGS   += -mthumb -mcpu=cortex-m4 -mfloat-abi=hard -mfpu=fpv4-sp-d16
 
 all: opencm3 lib examples
 
+DIRT := 
+
+clean:
+	rm -rf $(DIRT)
+
 opencm3:
 #       # libopencm3 can't stop rebuilding the world.
 	[ -f $(OPENCM3_DIR)/lib/libopencm3_stm32f4.a ] || \

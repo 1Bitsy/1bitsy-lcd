@@ -3,6 +3,8 @@
 #include <assert.h>
 #include <stdbool.h>
 
+#include <gfx-pixtile.h>
+
 #include "util.h"
 
 // --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  -
@@ -338,4 +340,3 @@ void gfx_draw_line_aa(gfx_pixtile *tile,
         }
     }
 }
-

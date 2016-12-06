@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := all
 
 %:
-	echo "$@"
-	$(MAKE) -C .. "$@"
+	$(MAKE) -C .. "$@" --print-directory
+
