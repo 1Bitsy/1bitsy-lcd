@@ -5,8 +5,11 @@
 
 #include <gfx-pixtile.h>
 
-#define LCD_WIDTH  240
-#define LCD_HEIGHT 320
+#define LCD_WIDTH              240
+#define LCD_HEIGHT             320
+#define LCD_MAX_TILE_BYTES   65536
+#define LCD_MAX_TILE_PIXELS  (LCD_MAX_TILE_BYTES / sizeof (gfx_rgb565))
+#define LCD_MAX_TILE_ROWS    (LCD_MAX_TILE_PIXELS / LCD_WIDTH)
 
 // Init the clocks, GPIO pins, timer, DMA controller, ILI9341 chip,
 // and pixtile DMA buffers.
@@ -24,6 +27,10 @@ void lcd_send_pixtile(gfx_pixtile *);
 //
 // If immediate, the next tile allocated will have the new color.
 // Otherwise, color change will take effect after 0-2 allocations.
-extern void lcd_set_bg_color(uint16_t color, bool immediate);
+extern void lcd_set_bg_color(gfx_rgb565 color, bool immediate);
+
+// Get the background pixel color.
+extern gfx_rgb565 lcd_bg_color(void);
+
 
 #endif /* !LCD_included */

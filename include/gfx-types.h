@@ -3,7 +3,6 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include <unistd.h>
 
 typedef uint16_t gfx_rgb565;
 typedef uint32_t gfx_rgb888;

@@ -1,20 +1,21 @@
 // own header
-#include "video.h"
+#include <lcd.h>
 
 // C and POSIX headers
 #include <assert.h>
 
-// Library headers
+// External Library headers
 #include <libopencm3/cm3/nvic.h>
 #include <libopencm3/stm32/dma.h>
 #include <libopencm3/stm32/gpio.h>
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/timer.h>
 
-// Application headers
-#include "gpio.h"
-#include "intr.h"
-#include "systick.h"
+// Current Library headers
+#include <gfx-pixtile.h>
+#include <gpio.h>
+#include <intr.h>
+#include <systick.h>
 
 
 // --  Dimensions  --  --  --  --  --  --  --  --  --  --  --  --  --  -
@@ -27,8 +28,6 @@
 
 #define PIXTILE_COUNT          2
 #define PIXTILE_MAX_SIZE_BYTES (RAM_SIZE / PIXTILE_COUNT)
-#define PIXTILE_WIDTH_BYTES    (PIXTILE_WIDTH * sizeof (uint16_t))
-#define REAL_PIXTILE_MAX_H     (PIXTILE_MAX_SIZE_BYTES / PIXTILE_WIDTH_BYTES)
 
 typedef enum pixtile_state {
     TS_CLEARED,
@@ -40,16 +39,17 @@ typedef enum pixtile_state {
 } pixtile_state;
 
 typedef struct pixtile_impl {
-    pixtile                tile; // must be first.
+    gfx_pixtile            tile; // must be first.
     volatile pixtile_state state;
+    void                  *buffer;
 } pixtile_impl;
 
 static pixtile_impl pixtiles[PIXTILE_COUNT];
-static volatile uint16_t bg_color = 0x0000;
+static volatile gfx_rgb565 bg_color = 0x0000;
 
-static inline size_t pixtile_size_bytes(pixtile *tile)
+static inline size_t pixtile_size_bytes(const gfx_pixtile *tile)
 {
-    return tile->height * sizeof *tile->pixels;
+    return tile->h * tile->w * sizeof *tile->pixels;
 }
 
 
@@ -231,18 +231,18 @@ static inline void bang16(uint16_t data, bool done)
 
 // --  Clear DMA   --  --  --  --  --  --  --  --  --  --  --  --  --  -
 
-static void setup_clear_dma(void)
+static volatile bool clear_dma_busy;
+
+static void init_clear_dma(void)
 {
     rcc_periph_clock_enable(RCC_DMA2);
     nvic_enable_irq(NVIC_DMA2_STREAM7_IRQ);
 }
 
-static volatile bool clear_dma_busy;
-
-static void start_clear_dma(pixtile *tile)
+static void start_clear_dma(const pixtile_impl *impl)
 {
-    size_t size = PIXTILE_MAX_SIZE_BYTES;
-    uintptr_t base = (uintptr_t)tile->pixels;
+    uintptr_t base = (uintptr_t)impl->buffer;
+    size_t size = LCD_MAX_TILE_BYTES;
     assert(RAM_BASE <= base);
     assert(base + size <= RAM_BASE + RAM_SIZE);
     assert(size >= 16);
@@ -250,7 +250,7 @@ static void start_clear_dma(pixtile *tile)
 
     // Fill the first 16 bytes with the pixel.  Then
     // DMA will duplicate that through the buffer.
-    uint32_t *p = (uint32_t *)tile->pixels;
+    uint32_t *p = impl->buffer;
     const int pburst = 4;
 
     uint32_t pix_twice = bg_color << 16 | bg_color;
@@ -262,7 +262,7 @@ static void start_clear_dma(pixtile *tile)
     while (DMA2_S7CR & DMA_SxCR_EN)
         continue;
 
-    DMA2_S7PAR  = (void *)tile->pixels;
+    DMA2_S7PAR  = (void *)impl->buffer;
     DMA2_S7M0AR = p;
     DMA2_S7NDTR = (size - 16) / 4;
     DMA2_S7FCR  = (DMA_SxFCR_FEIE          |
@@ -309,12 +309,12 @@ void dma2_stream7_isr(void)
         } else if (impl->state == TS_CLEAR_WAIT && !clear_dma_busy) {
             impl->state = TS_CLEARING;
             clear_dma_busy = true;
-            start_clear_dma(&impl->tile);
+            start_clear_dma(impl);
         }
     }
 }
 
-static void clear_pixtile(pixtile *tile)
+static void clear_pixtile(gfx_pixtile *tile)
 {
     pixtile_impl *impl = (pixtile_impl *)tile;
     bool busy = false;
@@ -328,7 +328,7 @@ static void clear_pixtile(pixtile *tile)
         }
     }
     if (!busy)
-        start_clear_dma(&impl->tile);
+        start_clear_dma(impl);
 }
 
 
@@ -336,8 +336,9 @@ static void clear_pixtile(pixtile *tile)
 
 static volatile bool video_dma_busy;
 
-static void start_video_dma(pixtile *tile)
+static void start_video_dma(const pixtile_impl *impl)
 {
+    const gfx_pixtile *tile = &impl->tile;
     // Configure DMA.
     {
         DMA2_S1CR &= ~DMA_SxCR_EN;
@@ -354,7 +355,7 @@ static void start_video_dma(pixtile *tile)
         #endif
 
         DMA2_S1PAR  = par;
-        DMA2_S1M0AR = tile->pixels;
+        DMA2_S1M0AR = impl->buffer;
         DMA2_S1NDTR = pixtile_size_bytes(tile);
         DMA2_S1FCR  = (DMA_SxFCR_FEIE                 |
                        DMA_SxFCR_DMDIS                |
@@ -442,12 +443,12 @@ static void start_video_dma(pixtile *tile)
 
     // Bit-bang the ILI9341 RAM address range.
     bang8(ILI9341_CASET, true, false);
-    bang16(0, false);
-    bang16(PIXTILE_WIDTH - 1, false);
+    bang16(tile->x, false);
+    bang16(tile->x + tile->w - 1, false);
 
     bang8(ILI9341_PASET, true, false);
     bang16(tile->y, false);
-    bang16(tile->y + tile->height - 1, false);
+    bang16(tile->y + tile->h - 1, false);
 
     // Bit-bang the command word.
     bang8(ILI9341_RAMWR, true, false);
@@ -510,13 +511,13 @@ void dma2_stream1_isr(void)
             } else if (impl->state == TS_SEND_WAIT && !video_dma_busy) {
                 impl->state = TS_SENDING;
                 video_dma_busy = true;
-                start_video_dma(&impl->tile);
+                start_video_dma(impl);
             }
         }
     }
 }
 
-static void setup_video_dma(void)
+static void init_video_dma(void)
 {
     // RCC
     rcc_periph_clock_enable(RCC_GPIOB);
@@ -561,27 +562,65 @@ static void setup_video_dma(void)
 }
 
 
-// --  Facade  --  --  --  --  --  --  --  --  --  --  --  --  --  --  -
+// --  Pixtile DMA buffers --  --  --  --  --  --  --  --  --  --  --  -
 
-static void setup_pixtiles(void)
+static void init_pixtiles(void)
 {
     for (size_t i = 0; i < PIXTILE_COUNT; i++) {
         pixtile_impl *impl = pixtiles + i;
         uintptr_t addr = RAM_BASE + i * PIXTILE_MAX_SIZE_BYTES;
-        impl->tile.pixels = (uint16_t(*)[240])addr;
+        impl->buffer = (void *)addr;
         clear_pixtile(&impl->tile);
     }
 }
 
-void setup_video(void)
+
+// --  Facade API  --  --  --  --  --  --  --  --  --  --  --  --  --  -
+
+void lcd_init(void)
 {
-    assert(REAL_PIXTILE_MAX_H == PIXTILE_MAX_HEIGHT);
-    setup_video_dma();
-    setup_clear_dma();
-    setup_pixtiles();
+    init_video_dma();
+    init_clear_dma();
+    init_pixtiles();
 }
 
-void video_set_bg_color(uint16_t color, bool immediate)
+gfx_pixtile *lcd_alloc_pixtile(int x, int y, size_t w, size_t h)
+{
+    pixtile_impl *impl = NULL;
+    while (!impl) {
+        for (size_t i = 0; i < PIXTILE_COUNT && !impl; i++) {
+            WITH_INTERRUPTS_MASKED {
+                if (pixtiles[i].state == TS_CLEARED) {
+                    impl = &pixtiles[i];
+                    impl->state = TS_DRAWING;
+                }
+            }
+        }
+    }
+    pixtile_init(&impl->tile, impl->buffer,
+                 x, y, w, h,
+                 w * sizeof (gfx_rgb565));
+    return &impl->tile;
+}
+
+void lcd_send_pixtile(gfx_pixtile *tile)
+{
+    pixtile_impl *impl = (pixtile_impl *)tile;
+    bool busy = false;
+    WITH_INTERRUPTS_MASKED {
+        busy = video_dma_busy;
+        if (busy) {
+            impl->state = TS_SEND_WAIT;
+        } else {
+            video_dma_busy = true;
+            impl->state = TS_SENDING;
+        }
+    }
+    if (!busy)
+        start_video_dma(impl);
+}
+
+void lcd_set_bg_color(gfx_rgb565 color, bool immediate)
 {
     if (immediate) {
         bool needs_clearing[PIXTILE_COUNT] = { false, false };
@@ -603,44 +642,9 @@ void video_set_bg_color(uint16_t color, bool immediate)
     }
 }
 
-uint16_t video_bg_color(void)
+gfx_rgb565 lcd_bg_color(void)
 {
     return bg_color;
-}
-
-pixtile *alloc_pixtile(size_t y, size_t h)
-{
-    pixtile_impl *impl = NULL;
-    while (!impl) {
-        for (size_t i = 0; i < PIXTILE_COUNT && !impl; i++) {
-            WITH_INTERRUPTS_MASKED {
-                if (pixtiles[i].state == TS_CLEARED) {
-                    impl = &pixtiles[i];
-                    impl->state = TS_DRAWING;
-                }
-            }
-        }
-    }
-    impl->tile.height = h;
-    impl->tile.y      = y;
-    return &impl->tile;
-}
-
-void send_pixtile(pixtile *tile)
-{
-    pixtile_impl *impl = (pixtile_impl *)tile;
-    bool busy = false;
-    WITH_INTERRUPTS_MASKED {
-        busy = video_dma_busy;
-        if (busy) {
-            impl->state = TS_SEND_WAIT;
-        } else {
-            video_dma_busy = true;
-            impl->state = TS_SENDING;
-        }
-    }
-    if (!busy)
-        start_video_dma(&impl->tile);
 }
 
 // --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  -
