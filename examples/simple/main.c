@@ -22,6 +22,7 @@
 #define BG_COLOR 0x001F         // blue
 
 static int center_y = 160;
+uint32_t   fps;
 
 static void setup(void)
 {
@@ -63,8 +64,8 @@ static void draw_tile(gfx_pixtile *tile)
 {
     bool in_circle = false;
 
-    for (int y = 80; y < 240; y++) {
-        for (int x = 60; x < 180; x++) {
+    for (int y = 80; y < 240; y += 3) {
+        for (int x = 60; x < 180; x += 2) {
             in_circle = is_in_circle(x, y);
             if (!in_circle || !((x % 3) && !(y % 2)))
                 gfx_fill_pixel(tile, x, y, FG_COLOR);
@@ -85,11 +86,25 @@ static void draw_frame(void)
 
 }
 
+void calc_fps(void);
+void calc_fps(void)
+{
+    static uint32_t next_time;
+    static uint32_t frame_count;
+    frame_count++;
+    if (system_millis >= next_time) {
+        fps = frame_count;
+        frame_count = 0;
+        next_time += 1000;
+    }
+}
+
 static void run(void)
 {
     while (true) {
         animate();
         draw_frame();
+        calc_fps();
     }
 }
 

@@ -17,3 +17,6 @@ $($D_LIBS): $(src_OFILES)
 	rm -f $@
 	$(AR) cr $@ $(src_OFILES)
 
+# XXX compile this file with optimization and DMA gets unreliable.
+# Don't know why.
+$D/lcd.o: CFLAGS := $(CFLAGS:-O%=-O0)

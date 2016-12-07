@@ -262,7 +262,7 @@ static void start_clear_dma(const pixtile_impl *impl)
     while (DMA2_S7CR & DMA_SxCR_EN)
         continue;
 
-    DMA2_S7PAR  = (void *)impl->buffer;
+    DMA2_S7PAR  = (void *)base;
     DMA2_S7M0AR = p;
     DMA2_S7NDTR = (size - 16) / 4;
     DMA2_S7FCR  = (DMA_SxFCR_FEIE          |

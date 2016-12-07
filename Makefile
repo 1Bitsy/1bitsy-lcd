@@ -10,7 +10,7 @@
                   -Wall -Wundef -Wextra -Wshadow -Werror                \
                   -Wimplicit-function-declaration -Wredundant-decls     \
                   -Wmissing-prototypes -Wstrict-prototypes              \
-                  -g -O0
+                  -g -O3
        LDFLAGS := --static -nostartfiles                                \
                   -Lsrc -L$(OPENCM3_DIR)/lib                            \
                   -Tstm32f4-1bitsy.ld -Wl,--gc-sections
