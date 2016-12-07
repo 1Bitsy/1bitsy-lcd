@@ -12,18 +12,18 @@ struct gfx_pixtile {
     ssize_t     stride;
 };
 
-extern void pixtile_init(gfx_pixtile *tile,
-                         void *buffer,
-                         int x, int y,
-                         size_t w, size_t h,
-                         size_t stride);
+extern void gfx_init_pixtile(gfx_pixtile *tile,
+                             void *buffer,
+                             int x, int y,
+                             size_t w, size_t h,
+                             size_t stride);
                          
-static inline gfx_rgb565 *pixtile_pixel_address_unchecked(gfx_pixtile *tile,
-                                                          int x, int y)
+static inline gfx_rgb565 *gfx_pixel_address_unchecked(gfx_pixtile *tile,
+                                                      int x, int y)
 {
-    return tile->pixels - y * tile->stride - x;
+    return tile->pixels + y * tile->stride + x;
 }
 
-extern gfx_rgb565 *pixtile_pixel_address(gfx_pixtile *tile, int x, int y);
+extern gfx_rgb565 *gfx_pixel_address(gfx_pixtile *tile, int x, int y);
 
 #endif /* !GFX_PIXTILE_included */

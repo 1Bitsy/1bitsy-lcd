@@ -1,17 +1,19 @@
-        LIB := src/libgfx.a
+         D := src
 
-     CFILES := gfx.c lcd.c gpio.c pixtile.c
+    LIBGFX := $D/libgfx.a
+    CFILES := gfx.c lcd.c gpio.c pixtile.c systick.c
 
- LIB_CFILES := $(CFILES:%=src/%)
- LIB_OFILES := $(LIB_CFILES:%.c=%.o)
+   $D_LIBS := $(LIBGFX)
+ $D_CFILES := $(CFILES:%=$D/%)
+ $D_OFILES := $($D_CFILES:%.c=%.o)
 
-     DFILES += $(LIB_CFILES:%.c=%.d)
-       DIRT += $(LIB) $(LIB_OFILES)
+    DFILES += $($D_CFILES:%.c=%.d)
+      DIRT += $($D_LIBS) $($D_OFILES)
 
 
-lib:	src/libgfx.a
+lib:	$($D_LIBS)
 
-$(LIB):	$(LIB_OFILES)
+$($D_LIBS): $(src_OFILES)
 	rm -f $@
-	$(AR) cr $@ $(LIB_OFILES)
+	$(AR) cr $@ $(src_OFILES)
 

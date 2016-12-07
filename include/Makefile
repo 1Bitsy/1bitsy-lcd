@@ -2,4 +2,3 @@
 
 %:
 	$(MAKE) -C .. "$@" --print-directory
-

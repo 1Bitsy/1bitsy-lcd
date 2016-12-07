@@ -597,9 +597,7 @@ gfx_pixtile *lcd_alloc_pixtile(int x, int y, size_t w, size_t h)
             }
         }
     }
-    pixtile_init(&impl->tile, impl->buffer,
-                 x, y, w, h,
-                 w * sizeof (gfx_rgb565));
+    gfx_init_pixtile(&impl->tile, impl->buffer, x, y, w, h, w);
     return &impl->tile;
 }
 

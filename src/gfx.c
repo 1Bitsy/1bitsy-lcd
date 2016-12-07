@@ -4,27 +4,10 @@
 #include <stdbool.h>
 
 #include <gfx-pixtile.h>
-
-#include "util.h"
+#include <math-util.h>
 
 // --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  --  -
 // Pixels
-
-static inline gfx_rgb565 *pixel_ptr_unclipped(gfx_pixtile *tile, int x, int y)
-{
-    x -= tile->x;
-    y -= tile->y;
-    return &tile->pixels[y * tile->stride + x];
-}
-
-static inline gfx_rgb565 *pixel_ptr(gfx_pixtile *tile, int x, int y)
-{
-    x -= tile->x;
-    y -= tile->y;
-    if ((unsigned)x >= tile->w || (unsigned)y >= tile->h)
-        return NULL;
-    return &tile->pixels[y * tile->stride + x];
-}
 
 static gfx_rgb565 blend_pixel(gfx_rgb565 dest, gfx_rgb888 src, gfx_alpha8 alpha)
 {
@@ -47,7 +30,7 @@ void gfx_fill_pixel(gfx_pixtile *tile,
                     int x, int y,
                     gfx_rgb888 color)
 {
-    gfx_rgb565 *p = pixel_ptr(tile, x, y);
+    gfx_rgb565 *p = gfx_pixel_address(tile, x, y);
     if (p)
         *p = color;
 }
@@ -59,7 +42,7 @@ void gfx_fill_pixel_blend(gfx_pixtile *tile,
 {
     if (!alpha)
         return;
-    gfx_rgb565 *p = pixel_ptr(tile, x, y);
+    gfx_rgb565 *p = gfx_pixel_address(tile, x, y);
     if (p) {
         if (alpha == 0xFF)
             *p = color;
@@ -72,7 +55,7 @@ void gfx_fill_pixel_unclipped(gfx_pixtile *tile,
                               int x, int y,
                               gfx_rgb888 color)
 {
-    gfx_rgb565 *p = pixel_ptr_unclipped(tile, x, y);
+    gfx_rgb565 *p = gfx_pixel_address_unchecked(tile, x, y);
     *p = color;
 }
 
@@ -81,7 +64,7 @@ void gfx_fill_pixel_blend_unclipped(gfx_pixtile *tile,
                                     gfx_rgb888 color,
                                     gfx_alpha8 alpha)
 {
-    gfx_rgb565 *p = pixel_ptr_unclipped(tile, x, y);
+    gfx_rgb565 *p = gfx_pixel_address_unchecked(tile, x, y);
     *p = blend_pixel(*p, color, alpha);
 }
 
@@ -94,12 +77,12 @@ static gfx_rgb565 *span_clip(gfx_pixtile *tile,
 {
     if (x0 < tile->x)
         x0 = tile->x;
-    if (x1 > tile->x + tile->w)
+    if (x1 > (ssize_t)(tile->x + tile->w))
         x1 = tile->x + tile->w;
     if (x0 >= x1)
         return NULL;
     *count_out = x1 - x0;
-    return pixel_ptr_unclipped(tile, x0, y);
+    return gfx_pixel_address_unchecked(tile, x0, y);
 }
 
 void gfx_fill_span(gfx_pixtile *tile,
@@ -138,7 +121,7 @@ void gfx_fill_span_unclipped(gfx_pixtile *tile,
                              int x0, int x1, int y,
                              gfx_rgb888 color)
 {
-    gfx_rgb565 *p = pixel_ptr_unclipped(tile, x0, y);
+    gfx_rgb565 *p = gfx_pixel_address_unchecked(tile, x0, y);
     for (int i = x0; i < x1; i++)
         *p++ = color;
 }
@@ -148,7 +131,7 @@ void gfx_fill_span_blend_unclipped(gfx_pixtile *tile,
                                    gfx_rgb888 color,
                                    gfx_alpha8 alpha)
 {
-    gfx_rgb565 *p = pixel_ptr_unclipped(tile, x0, y);
+    gfx_rgb565 *p = gfx_pixel_address_unchecked(tile, x0, y);
     for (int i = x0; i < x1; i++) {
         *p = blend_pixel(*p, color, alpha);
         p++;
@@ -185,7 +168,7 @@ void gfx_draw_line(gfx_pixtile *tile,
             int first_y = MAX(min_y,     (int)MIN(y0, y1));
             int last_y  = MIN(max_y - 1, (int)MAX(y0, y1));
             for (int y = first_y; y <= last_y; y++)
-                *pixel_ptr_unclipped(tile, x, y) = color;
+                *gfx_pixel_address_unchecked(tile, x, y) = color;
         }
 
     } else if (ABS(x1 - x0) >= ABS(y1 - y0)) {
@@ -205,7 +188,7 @@ void gfx_draw_line(gfx_pixtile *tile,
         float y_inc = (y1 > y0) ? +1.0f : -1.0f;
         for (int ix = FLOOR(x0); ix <= FLOOR(x1); ix++) {
             int iy = FLOOR(y);
-            gfx_rgb565 *p = pixel_ptr(tile, ix, iy);
+            gfx_rgb565 *p = gfx_pixel_address(tile, ix, iy);
             if (p)
                 *p = color;
             if (d >= 0) {
@@ -232,7 +215,7 @@ void gfx_draw_line(gfx_pixtile *tile,
         float x_inc = (x1 > x0) ? +1.0f : -1.0f;
         for (int iy = FLOOR(y0); iy <= FLOOR(y1); iy++) {
             int ix = FLOOR(x);
-            gfx_rgb565 *p = pixel_ptr(tile, ix, iy);
+            gfx_rgb565 *p = gfx_pixel_address(tile, ix, iy);
             if (p)
                 *p = color;
             if (d >= 0) {
@@ -275,17 +258,17 @@ void gfx_draw_line_aa(gfx_pixtile *tile,
     int xpxl1 = xend;
     int ypxl1 = FLOOR(yend);
     if (steep) {
-        gfx_rgb565 *p = pixel_ptr(tile, ypxl1, xpxl1);
+        gfx_rgb565 *p = gfx_pixel_address(tile, ypxl1, xpxl1);
         if (p)
             *p = blend_pixel(*p, color, RFRAC(yend) * xgap);
-        p = pixel_ptr(tile, ypxl1 + 1, xpxl1);
+        p = gfx_pixel_address(tile, ypxl1 + 1, xpxl1);
         if (p)
             *p = blend_pixel(*p, color, FRAC(yend) * xgap);
     } else {
-        gfx_rgb565 *p = pixel_ptr(tile, xpxl1, ypxl1);
+        gfx_rgb565 *p = gfx_pixel_address(tile, xpxl1, ypxl1);
         if (p)
             *p = blend_pixel(*p, color, RFRAC(yend) * xgap);
-        p = pixel_ptr(tile, xpxl1, ypxl1 + 1);
+        p = gfx_pixel_address(tile, xpxl1, ypxl1 + 1);
         if (p)
             *p = blend_pixel(*p, color, FRAC(yend) * xgap);
     }
@@ -298,17 +281,17 @@ void gfx_draw_line_aa(gfx_pixtile *tile,
     int xpxl2 = xend;
     int ypxl2 = FLOOR(yend);
     if (steep) {
-        gfx_rgb565 *p = pixel_ptr(tile, ypxl2, xpxl2);
+        gfx_rgb565 *p = gfx_pixel_address(tile, ypxl2, xpxl2);
         if (p)
             *p = blend_pixel(*p, color, RFRAC(yend) * xgap);
-        p = pixel_ptr(tile, ypxl2 + 1, xpxl2);
+        p = gfx_pixel_address(tile, ypxl2 + 1, xpxl2);
         if (p)
             *p = blend_pixel(*p, color, FRAC(yend) * xgap);
     } else {
-        gfx_rgb565 *p = pixel_ptr(tile, xpxl2, ypxl2);
+        gfx_rgb565 *p = gfx_pixel_address(tile, xpxl2, ypxl2);
         if (p)
             *p = blend_pixel(*p, color, RFRAC(yend) * xgap);
-        p = pixel_ptr(tile, xpxl2, ypxl2 + 1);
+        p = gfx_pixel_address(tile, xpxl2, ypxl2 + 1);
         if (p)
             *p = blend_pixel(*p, color, FRAC(yend) * xgap);
     }
@@ -318,10 +301,10 @@ void gfx_draw_line_aa(gfx_pixtile *tile,
         for (int x = xpxl1 + 1; x < xpxl2; x++) {
             int y = FLOOR(intery);
             int f = 256.0f * FRAC(intery);
-            gfx_rgb565 *p = pixel_ptr(tile, y, x);
+            gfx_rgb565 *p = gfx_pixel_address(tile, y, x);
             if (p)
                 *p = blend_pixel(*p, color, 255  - f);
-            p = pixel_ptr(tile, y + 1, x);
+            p = gfx_pixel_address(tile, y + 1, x);
             if (p)
                 *p = blend_pixel(*p, color, f);
             intery += gradient;
@@ -330,10 +313,10 @@ void gfx_draw_line_aa(gfx_pixtile *tile,
         for (int x = xpxl1 + 1; x < xpxl2; x++) {
             int y = FLOOR(intery);
             int f = 256.0f * FRAC(intery);
-            gfx_rgb565 *p = pixel_ptr(tile, x, y);
+            gfx_rgb565 *p = gfx_pixel_address(tile, x, y);
             if (p)
                 *p = blend_pixel(*p, color, 255 - f);
-            p = pixel_ptr(tile, x, y + 1);
+            p = gfx_pixel_address(tile, x, y + 1);
             if (p)
                 *p = blend_pixel(*p, color, f);
             intery += gradient;
