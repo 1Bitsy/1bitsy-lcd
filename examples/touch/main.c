@@ -25,7 +25,8 @@
 #define P0_COLOR   RED_565
 #define P1_COLOR   BLUE_565
 
-#define CH_COLOR   RED_565
+#define CH0_COLOR  RED_565
+#define CH1_COLOR  BLUE_565
 
 #define CROSSHAIR_RADIUS 64
 
@@ -34,7 +35,9 @@ gfx_point line_p0;
 gfx_point line_p1;
 
 bool is_touching;
-gfx_ipoint touch_pt;
+unsigned t_count;
+gfx_ipoint touch_pt0;
+gfx_ipoint touch_pt1;
 
 static void setup(void)
 {
@@ -53,20 +56,32 @@ static void setup(void)
 
 static void animate(void)
 {
-    is_touching = touch_count() != 0;
-    if (is_touching) {
+    t_count = touch_count();
+    if (t_count >= 1) {
         gfx_ipoint tp = touch_point(0);
-        touch_pt = (gfx_ipoint){ .x = tp.x, .y = tp.y };
+        touch_pt0 = (gfx_ipoint){ .x = tp.x, .y = tp.y };
+    }
+    if (t_count >= 2) {
+        gfx_ipoint tp = touch_point(1);
+        touch_pt1 = (gfx_ipoint){ .x = tp.x, .y = tp.y };
     }
 }
 
 static void draw_tile(gfx_pixtile *tile)
 {
-    if (is_touching) {
-        const float      x = touch_pt.x;
-        const float      y = touch_pt.y;
+    if (t_count >= 1) {
+        const float      x = touch_pt0.x;
+        const float      y = touch_pt0.y;
         const float      r = CROSSHAIR_RADIUS;
-        const gfx_rgb565 c = CH_COLOR;
+        const gfx_rgb565 c = CH0_COLOR;
+        gfx_draw_line(tile, x - r, y, x + r, y, c);
+        gfx_draw_line(tile, x, y - r, x, y + r, c);
+    }
+    if (t_count >= 2) {
+        const float      x = touch_pt1.x;
+        const float      y = touch_pt1.y;
+        const float      r = CROSSHAIR_RADIUS;
+        const gfx_rgb565 c = CH1_COLOR;
         gfx_draw_line(tile, x - r, y, x + r, y, c);
         gfx_draw_line(tile, x, y - r, x, y + r, c);
     }
