@@ -434,8 +434,8 @@ static void start_video_dma(const pixtile_impl *impl)
         TIM8_PSC    = 0;
         // TIM8_ARR    = 34/2;
         // TIM8_CCR3   = 17/2;
-        TIM8_ARR    = 17;
-        TIM8_CCR3   = 12;
+        TIM8_ARR    = 17 + 2;
+        TIM8_CCR3   = 12 + 4;
         TIM8_BDTR   = TIM_BDTR_MOE | TIM_BDTR_OSSR;
         // TIM8_DCR    = 0;
         // TIM8_DMAR   = 0;

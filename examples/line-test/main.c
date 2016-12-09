@@ -67,8 +67,8 @@ static void setup(void)
 
 static void animate(void)
 {
-    line_p0 = (gfx_point){ .x = -2,         .y = -1          };
-    line_p1 =   (gfx_point){ .x = WIDTH - 2, .y = HEIGHT - 2 };
+    line_p0 = (gfx_point){ .x = +2,        .y = +1         };
+    line_p1 = (gfx_point){ .x = WIDTH - 2, .y = HEIGHT - 2 };
 
     for (int y = 0; y < HEIGHT; y++)
         for (int x = 0; x < WIDTH; x++)

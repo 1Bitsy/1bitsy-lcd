@@ -17,6 +17,13 @@ typedef union gfx_point {
     float c[2];                 // use p.c[i]
 } gfx_point;
 
+typedef union gfx_ipoint {
+    struct {
+        int x, y;               // use p.x, p.y
+    };
+    int c[2];                   // use p.c[i]
+} gfx_ipoint;
+
 typedef struct gfx_trapezoid {
     float xl0, xr0, y0;
     float xl1, xr1, y1;

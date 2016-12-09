@@ -1,7 +1,7 @@
          D := src
 
     LIBGFX := $D/libgfx.a
-    CFILES := gfx.c lcd.c gpio.c pixtile.c systick.c
+    CFILES := gfx.c lcd.c gpio.c i2c.c pixtile.c systick.c touch.c
 
    $D_LIBS := $(LIBGFX)
  $D_CFILES := $(CFILES:%=$D/%)

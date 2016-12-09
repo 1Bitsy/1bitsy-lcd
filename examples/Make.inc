@@ -1,3 +1,3 @@
-EXAMPLES := line-test simple
+EXAMPLES := line-test simple touch
 
 include $(EXAMPLES:%=examples/%/Make.inc)
