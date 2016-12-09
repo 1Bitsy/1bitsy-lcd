@@ -8,9 +8,9 @@
 #include <lcd.h>
 
 #define FT6206_ADDRESS          0x70
-#define FT6206_THRESHOLD          40
+#define FT6206_THRESHOLD         128
 #define FT6206_VENDOR_ID          17
-#define FT6206_CIPHER             16
+#define FT6206_CIPHER              6
 
 #define FT6206_REG_P1_XH        0x03
 #define FT6206_REG_P1_XL        0x04
@@ -21,6 +21,7 @@
 #define FT6206_REG_P2_YH        0x0B
 #define FT6206_REG_P2_YL        0x0C
 #define FT6206_REG_TD_STATUS    0x02
+#define FT6206_REG_TH_GROUP     0x80
 #define FT6206_REG_CIPHER       0xA3
 #define FT6206_REG_FOCALTECH_ID 0xA8
 
@@ -41,11 +42,11 @@ static uint8_t ft6206_read_register(uint8_t reg)
     return in[0];
 }
 
-// static void ft6202_write_register(uint8_t reg, uint8_t value)
-// {
-//     const uint8_t out[2] = { reg, value };
-//     i2c_transmit(&ft6206_channel, out, 2);
-// }
+static void ft6206_write_register(uint8_t reg, uint8_t value)
+{
+    const uint8_t out[2] = { reg, value };
+    i2c_transmit(&ft6206_channel, out, 2);
+}
 
 void touch_init(void)
 {
@@ -78,10 +79,12 @@ void touch_init(void)
     };
     init_i2c(&config);
 
-    // uint8_t vendor_id = ft6206_read_register(FT6206_REG_FOCALTECH_ID);
-    // // assert(vendor_id == FT6206_VENDOR_ID);
-    // uint8_t cipher = ft6206_read_register(FT6206_REG_CIPHER);
-    // assert(cipher == FT6206_CIPHER);
+    uint8_t vendor_id = ft6206_read_register(FT6206_REG_FOCALTECH_ID);
+    assert(vendor_id == FT6206_VENDOR_ID);
+    uint8_t cipher = ft6206_read_register(FT6206_REG_CIPHER);
+    assert(cipher == FT6206_CIPHER);
+
+    ft6206_write_register(FT6206_REG_TH_GROUP, FT6206_THRESHOLD);
 }
 
 size_t touch_count(void)
