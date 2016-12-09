@@ -6,23 +6,14 @@
 #include <systick.h>
 #include <math-util.h>
 
-// This is about as simple as a libgfx client can be.
-// Draw a rectangular grid of pixels over and over.
-// Leave a moving circle of pixels uncolored.
-//
-// The basic structure is universal, though:
-//   main() sets up, then runs.
-//   run() repeatedly animates and draws a frame.
-//   animate() updates some state.
-//   draw_frame() splits the screen into tiles and draws each.
-//   draw_tile() calls gfx drawing functions.
+// The classic Munching Square eye candy.
 
 #define MY_CLOCK (rcc_hse_25mhz_3v3[RCC_CLOCK_3V3_168MHZ])
-#define FG_COLOR 0xFFE0         // yellow
-#define BG_COLOR 0x001F         // blue
+#define BG_COLOR 0x0000         // black
+#define MAGIC 27                // try different values
 
-static int center_y = 160;
 uint32_t   fps;
+gfx_rgb565 base_color;
 
 static void setup(void)
 {
@@ -39,37 +30,24 @@ static void setup(void)
 
 static void animate(void)
 {
-    // Bounce the circle center up and down.
-
-    static int inc = +1;
-    center_y += inc;
-    if (center_y > 180) {
-        center_y = 180;
-        inc = -1;
-    }
-    if (center_y < 140) {
-        center_y = 140;
-        inc = +1;
-    }
-}
-
-static bool is_in_circle(int x, int y)
-{
-    x -= 120;
-    y -= center_y;
-    return x * x + y * y <= 50 * 50;
+    base_color += 0x0021;
 }
 
 static void draw_tile(gfx_pixtile *tile)
 {
-    bool in_circle = false;
+    const int y_off = 32;
+    const int x_off = -8;
 
-    for (int y = 80; y < 240; y += 3) {
-        for (int x = 60; x < 180; x += 2) {
-            in_circle = is_in_circle(x, y);
-            if (!in_circle || !((x % 3) && !(y % 2)))
-                gfx_fill_pixel(tile, x, y, FG_COLOR);
-        }
+    int y0 = MAX(0, tile->y - y_off);
+    int y1 = MIN(256, tile->y + (int)tile->h - y_off);
+    int x0 = tile->x - x_off;
+    int x1 = x0 + tile->w - x_off;
+    gfx_rgb565 base = base_color;
+    for (int y = y0; y < y1; y++) {
+        gfx_rgb565 *p =
+            gfx_pixel_address_unchecked(tile, x0 + x_off, y + y_off);
+        for (int x = x0; x < x1; x++)
+            *p++ = base + MAGIC * (x ^ y);
     }
 }
 
