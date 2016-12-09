@@ -25,8 +25,8 @@
 
 all: opencm3 lib examples
 
-include src/Make.inc
-include examples/Make.inc
+include src/Dir.make
+include examples/Dir.make
 
 clean:
 	rm -rf $(DIRT) $(DFILES)
