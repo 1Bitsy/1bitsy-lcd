@@ -20,6 +20,8 @@
                                 t1 > t2 ? t1 : t2;                      \
                             })
 
+#define CLAMP(min, max, x) MAX(min, MIN(max, x))
+
 // SIGN(x) * ABS(x) == x
 
 #define ABS(a)              ABS_H(a, TMPVAR_H())
@@ -36,19 +38,19 @@
 
 // FLOOR(x) + FRAC(x) == x
 
-#define FLOOR(x)            FLOOR_H(x, t)
+#define FLOOR(x)            FLOOR_H(x, TMPVAR_H())
 #define FLOOR_H(x, t)       ({                                          \
                                 __typeof__ (x) t = (x);                 \
                                 t >= 0 ? (int)t : -(int)-t;             \
                             })
 
-#define CEIL(x)            CEIL_H(x, t)
+#define CEIL(x)            CEIL_H(x, TMPVAR_H())
 #define CEIL_H(x, t)       ({                                           \
                                 __typeof__ (x) t = (x);                 \
                                 t >= 0 ? -(int)-t : (int)t;             \
                             })
 
-#define FRAC(x)             FRAC_H(x, t)
+#define FRAC(x)             FRAC_H(x, TMPVAR_H())
 #define FRAC_H(x, t)        ({                                          \
                                 __typeof__ (x) t = (x);                 \
                                 t >= 0 ? t - (int)t : t + (int)-t;      \
@@ -60,5 +62,3 @@
 #define ROUND(x)            FLOOR(x + 0.5)
 
 #endif /* !UTIL_included */
-
-

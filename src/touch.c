@@ -89,7 +89,11 @@ void touch_init(void)
 
 size_t touch_count(void)
 {
-    return ft6206_read_register(FT6206_REG_TD_STATUS) & 0x0F;
+    // XXX Until we've touched it once, this returns 0xFF.
+    uint8_t n = ft6206_read_register(FT6206_REG_TD_STATUS) & 0x0F;
+    if (n > 2)
+        n = 0;
+    return n;
 }
 
 gfx_ipoint touch_point(size_t index)

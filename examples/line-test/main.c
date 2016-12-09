@@ -3,11 +3,11 @@
 
 #include <gfx.h>
 #include <lcd.h>
-#include <systick.h>
 #include <math-util.h>
+#include <systick.h>
+#include <touch.h>
 
 // Draw various lines and display using big pixels.
-
 
 #define MY_CLOCK (rcc_hse_25mhz_3v3[RCC_CLOCK_3V3_168MHZ])
 
@@ -33,12 +33,18 @@
 #define WIDTH ((RIGHT - LEFT) / ZOOM)
 #define HEIGHT ((BOTTOM - TOP) / ZOOM)
 
+#define TOUCH_PROXIMITY 20      // pixel distance to match
+#define CROSSHAIR_RADIUS 64
+
 static gfx_pixtile my_tile;
 static gfx_rgb565 my_pixels[HEIGHT * WIDTH];
 
 uint32_t fps;
-gfx_point line_p0;
-gfx_point line_p1;
+static gfx_point line_p0;
+static gfx_point line_p1;
+static bool is_touching;
+static int endpt;
+static gfx_point tp_offset;
 
 static inline gfx_point zoom_in(gfx_point p)
 {
@@ -48,6 +54,27 @@ static inline gfx_point zoom_in(gfx_point p)
 static inline gfx_point zoom_out(gfx_point p)
 {
     return (gfx_point) { .x = (p.x - LEFT) / ZOOM, .y = (p.y - TOP) / ZOOM };
+}
+
+static inline float distance2(gfx_point *a, gfx_point *b)
+{
+    float dx = a->x - b->x;
+    float dy = a->y - b->y;
+    return dx * dx + dy + dy;
+}
+
+static void render_tile(void)
+{
+    for (int y = 0; y < HEIGHT; y++)
+        for (int x = 0; x < WIDTH; x++)
+            *gfx_pixel_address_unchecked(&my_tile, x, y) = FG_COLOR;
+
+    gfx_point p0 = zoom_out(line_p0);
+    gfx_point p1 = zoom_out(line_p1);
+    gfx_draw_line(&my_tile,
+                  p0.x, p0.y,
+                  p1.x, p1.y,
+                  PIX_COLOR);
 }
 
 static void setup(void)
@@ -61,26 +88,67 @@ static void setup(void)
 
     lcd_set_bg_color(BG_COLOR, false);
     lcd_init();
+    touch_init();
 
     gfx_init_pixtile(&my_tile, my_pixels, 0, 0, WIDTH, HEIGHT, WIDTH);
+
+    line_p0 = zoom_in((gfx_point){ .x = +1,        .y = +1         });
+    line_p1 = zoom_in((gfx_point){ .x = WIDTH - 2, .y = HEIGHT - 2 });
+    render_tile();
+
 }
 
 static void animate(void)
 {
-    line_p0 = (gfx_point){ .x = +2,        .y = +1         };
-    line_p1 = (gfx_point){ .x = WIDTH - 2, .y = HEIGHT - 2 };
+    bool was_touching = is_touching;
+    is_touching = touch_count() != 0;
+    if (!is_touching)
+        return;
 
-    for (int y = 0; y < HEIGHT; y++)
-        for (int x = 0; x < WIDTH; x++)
-            *gfx_pixel_address_unchecked(&my_tile, x, y) = FG_COLOR;
+    gfx_ipoint itp = touch_point(0);
+    gfx_point tp = (gfx_point) { .x = itp.x, .y = itp.y };
 
-    gfx_draw_line(&my_tile,
-                  line_p0.x, line_p0.y,
-                  line_p1.x, line_p1.y,
-                  PIX_COLOR);
+    if (!was_touching) {
+        // on finger down, decide which endpoint to drag and
+        // calculate an offset.
+        float dd0 = distance2(&tp, &line_p0);
+        float dd1 = distance2(&tp, &line_p1);
+        float prox2 = TOUCH_PROXIMITY * TOUCH_PROXIMITY;
+
+        if (dd0 > prox2 && dd1 > prox2) {
+            endpt = -1;
+            return;
+        }
+        if (dd0 < dd1) {
+            endpt = 0;
+            tp_offset = (gfx_point) {
+                .x = line_p0.x - tp.x,
+                .y = line_p0.y - tp.y
+            };
+        } else {
+            endpt = 1;
+            tp_offset = (gfx_point) {
+                .x = line_p1.x - tp.x,
+                .y = line_p1.y - tp.y
+            };
+        }
+    } else {
+        // on drag, move the active endpoint.
+        if (endpt == 0) {
+            line_p0 = (gfx_point) { {
+                .x = CLAMP(0, LCD_WIDTH - 1, tp.x + tp_offset.x),
+                .y = CLAMP(0, LCD_HEIGHT - 1, tp.y + tp_offset.y),
+            } };
+        } else if (endpt == 1) {
+            line_p1 = (gfx_point) { {
+                .x = CLAMP(0, LCD_WIDTH, tp.x + tp_offset.x),
+                .y = CLAMP(0, LCD_HEIGHT, tp.y + tp_offset.y),
+            } };
+        }
+    }
+    
+    render_tile();
 }
-
-
 
 static void fill_rect(gfx_pixtile *tile,
                       int x, int y,
@@ -108,6 +176,17 @@ static void fill_diamond(gfx_pixtile *tile,
     }
 }
 
+static void draw_crosshairs(gfx_pixtile *tile,
+                            gfx_point    center,
+                            gfx_rgb565   color)
+{
+    const float x = center.x;
+    const float y = center.y;
+    const float r = CROSSHAIR_RADIUS;
+    gfx_draw_line(tile, x - r, y, x + r, y, color);
+    gfx_draw_line(tile, x, y - r, x, y + r, color);
+}
+
 static void draw_tile(gfx_pixtile *tile)
 {
     int iy0 = MAX(0, (tile->y - TOP) / ZOOM);
@@ -122,11 +201,15 @@ static void draw_tile(gfx_pixtile *tile)
         }
     }
 
-    gfx_point p0 = zoom_in(line_p0);
-    gfx_point p1 = zoom_in(line_p1);
-    gfx_draw_line(tile, p0.x, p0.y, p1.x, p1.y, LINE_COLOR);
-    fill_diamond(tile, p0, ZOOM/2, P0_COLOR);
-    fill_diamond(tile, p1, ZOOM/2, P1_COLOR);
+    gfx_draw_line(tile, line_p0.x, line_p0.y, line_p1.x, line_p1.y, LINE_COLOR);
+    fill_diamond(tile, line_p0, ZOOM/2, P0_COLOR);
+    fill_diamond(tile, line_p1, ZOOM/2, P1_COLOR);
+    if (is_touching) {
+        if (endpt == 0)
+            draw_crosshairs(tile, line_p0, P0_COLOR);
+        else if (endpt == 1)
+            draw_crosshairs(tile, line_p1, P1_COLOR);
+    }
 }
 
 static void draw_frame(void)
@@ -169,4 +252,3 @@ int main(void)
     setup();
     run();
 }
-

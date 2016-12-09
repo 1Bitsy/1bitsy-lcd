@@ -7,7 +7,7 @@
 #include <systick.h>
 #include <touch.h>
 
-// Move dots around using touch.
+// Move crosshairs around using touch.  Works with one or two fingers.
 
 #define MY_CLOCK (rcc_hse_25mhz_3v3[RCC_CLOCK_3V3_168MHZ])
 
