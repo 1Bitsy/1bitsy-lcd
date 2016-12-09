@@ -79,8 +79,10 @@ static gfx_rgb565 *span_clip(gfx_pixtile *tile,
         x0 = tile->x;
     if (x1 > (ssize_t)(tile->x + tile->w))
         x1 = tile->x + tile->w;
-    if (x0 >= x1)
+    if (x0 >= x1) {
+        *count_out = 0;
         return NULL;
+    }
     *count_out = x1 - x0;
     return gfx_pixel_address_unchecked(tile, x0, y);
 }
@@ -89,10 +91,13 @@ void gfx_fill_span(gfx_pixtile *tile,
                    int x0, int x1, int y,
                    gfx_rgb888 color)
 {
+    if (y < tile->y || y >= (ssize_t)(tile->y + tile->h))
+        return;
     size_t count;
     gfx_rgb565 *p = span_clip(tile, x0, x1, y, &count);
-    for (size_t i = 0; i < count; i++)
-        *p = color;
+    if (p)
+        for (size_t i = 0; i < count; i++)
+            *p++ = color;
 }
 
 void gfx_fill_span_blend(gfx_pixtile *tile,
