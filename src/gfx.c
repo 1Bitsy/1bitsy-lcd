@@ -105,6 +105,8 @@ void gfx_fill_span_blend(gfx_pixtile *tile,
                          gfx_rgb888 color,
                          gfx_alpha8 alpha)
 {
+    if (y < tile->y || y >= (ssize_t)(tile->y + tile->h))
+        return;
     if (alpha == 0)
         return;
     size_t count;
