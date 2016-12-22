@@ -1,3 +1,3 @@
-EXAMPLES := line-test munch simple touch
+EXAMPLES := button line-test munch simple touch
 
 include $(EXAMPLES:%=examples/%/Dir.make)

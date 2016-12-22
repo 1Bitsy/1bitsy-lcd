@@ -4,6 +4,10 @@
 
 Show the pixelation of a single line.
 
+## Button
+
+Control two traffic lights with two touchscreen buttons.
+
 ## Munch
 
 The classic [Munching Square](https://en.wikipedia.org/wiki/Munching_square) eye candy.
