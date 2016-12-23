@@ -1,7 +1,12 @@
 	    AR := arm-none-eabi-ar
 	    CC := arm-none-eabi-gcc
+        HOSTCC := cc
+       HOSTCXX := c++
+        HOSTLD := c++
 
+    SUBMODULES := libopencm3 agg
    OPENCM3_DIR := submodules/libopencm3
+       AGG_DIR := submodules/agg
 
       CPPFLAGS := -DSTM32F4
       CPPFLAGS += -Isrc -Iinclude -I$(OPENCM3_DIR)/include
@@ -40,5 +45,27 @@ opencm3:
 	  $(MAKE) -C $(OPENCM3_DIR) TARGETS=stm32/f4
 
 examples: $(EXAMPLE_ELVES)
+
+ifeq ($(wildcard $(OPENCM3_DIR)/*),)
+    missing_submodule := libopencm3
+endif
+
+ifeq ($(wildcard $(AGG_DIR)/*),)
+    missing_submodule := agg
+endif
+
+ifdef missing_submodule
+    # Hack: newline variable
+    # https://stackoverflow.com/questions/17055773
+    define n
+
+
+    endef
+    $(error $(missing_submodule) submodule is not initialized.$n\
+            please run:$n\
+            $$ git submodule init$n\
+            $$ git submodule update$n\
+            before running make)
+endif
 
 -include $(DFILES)
