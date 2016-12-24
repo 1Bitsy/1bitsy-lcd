@@ -28,7 +28,7 @@
  EXAMPLE_ELVES :=
 
 
-all: opencm3 lib examples
+all: opencm3 agg lib examples
 
 include src/Dir.make
 include examples/Dir.make
@@ -43,6 +43,10 @@ opencm3:
 #       # XXX libopencm3 can't stop rebuilding the world.
 	@ [ -f $(OPENCM3_DIR)/lib/libopencm3_stm32f4.a ] || \
 	  $(MAKE) -C $(OPENCM3_DIR) TARGETS=stm32/f4
+
+agg:
+	$(MAKE) -C $(AGG_DIR)
+	$(MAKE) -C $(AGG_DIR)/examples/macosx_sdl freetype 
 
 examples: $(EXAMPLE_ELVES)
 

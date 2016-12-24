@@ -14,10 +14,13 @@ D := examples/pixmaps
           DIRT += $($D_ELF) $($D_OFILES)
 
 $D/make-button: CC := $(HOSTCXX)
-$D/make-button: LDFLAGS :=
+$D/make-button: LDFLAGS := -L$(AGG_DIR)/src -L/opt/local/lib
+$D/make-button: LDLIBS := $(AGG_DIR)/font_freetype/agg_font_freetype.o
+$D/make-button: LDLIBS += -lagg -lfreetype
 $D/make-button: TARGET_ARCH :=
 
 $($D_OFILES): CXX := $(HOSTCXX)
-$($D_OFILES): CPPFLAGS := -I$(AGG_DIR)/include
+$($D_OFILES): CPPFLAGS := -I$(AGG_DIR)/include -I$(AGG_DIR)/font_freetype
+$($D_OFILES): CPPFLAGS += -I/opt/local/include/freetype2
 $($D_OFILES): TARGET_ARCH :=
-$($D_OFILES): CXXFLAGS := -O3
+$($D_OFILES): CXXFLAGS := -g 

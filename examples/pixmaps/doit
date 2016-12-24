@@ -1,0 +1,7 @@
+#!/bin/sh -ex
+
+make examples/pixmaps/make-button
+./make-button
+pnmtopng output.ppm > output.png
+open output.png
+open /Applications/Emacs.app
