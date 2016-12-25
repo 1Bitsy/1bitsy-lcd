@@ -1,8 +1,12 @@
+#define SUBPIX
+
+#include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "agg_conv_contour.h"
+#include <string>
+
 #include "agg_conv_stroke.h"
 #include "agg_font_freetype.h"
 #include "agg_pixfmt_rgb.h"
@@ -10,81 +14,205 @@
 #include "agg_renderer_base.h"
 #include "agg_renderer_scanline.h"
 #include "agg_rounded_rect.h"
+#ifdef SUBPIX
+    #include "agg_pixfmt_rgb24_lcd.h"
+#endif
 
-enum {
-    canvas_width  = 100,
-    canvas_height = 100,
+enum button_position {
+    up, dn
 };
 
-typedef agg::rendering_buffer rbuf_type;
+typedef agg::rendering_buffer rendering_buf;
 typedef agg::pixfmt_rgb24 pixfmt_type;
 typedef pixfmt_type::color_type color_type;
 typedef agg::renderer_base<pixfmt_type> base_renderer;
-typedef agg::renderer_scanline_aa_solid<base_renderer>  solid_renderer;
+typedef agg::renderer_scanline_aa_solid<base_renderer> solid_renderer;
+#ifdef SUBPIX
+    typedef agg::pixfmt_rgb24_lcd pixfmt_lcd_type;
+    typedef agg::renderer_base<pixfmt_lcd_type> base_renderer_lcd;
+    typedef agg::renderer_scanline_aa_solid<base_renderer_lcd>
+            solid_renderer_lcd;
+#endif
 
 typedef agg::rasterizer_scanline_aa<> scanline_rasterizer;
-// typedef agg::rasterizer_outline<primitives_renderer> outline_rasterizer;
 
 typedef agg::font_engine_freetype_int32 font_engine_type;
 typedef agg::font_cache_manager<font_engine_type> font_manager_type;
 typedef agg::conv_curve<font_manager_type::path_adaptor_type> font_curves_type;
-typedef agg::conv_contour<font_curves_type> font_contour_type;
 
-void render_button(base_renderer& rbase)
+struct button_params {
+
+    button_position position;
+
+    double          width;
+    double          height;
+    double          radius;
+    color_type      bg_color;
+    color_type      outline_color;
+    double          outline_width;
+
+    std::string     label_text;
+    std::string     label_font;
+    double          label_font_size;
+    color_type      label_color;
+
+    button_params() {}
+
+    button_params(button_position pos)
+        : width(50.0),
+          height(20.0),
+          radius(4.5),
+          bg_color(pos ? color_type(0x6a, 0x6a, 0x6a)
+                       : color_type(0xff, 0xff, 0xff)),
+          outline_color(pos ? color_type(0x20, 0x20, 0x20)
+                            : color_type(0xac, 0xac, 0xac)),
+          outline_width(0.5),
+          label_font("fonts/Ubuntu-C.ttf"),
+          label_font_size(14),
+          label_color(pos ? color_type(0xdf, 0xdf, 0xdf)
+                          : color_type(0x9e, 0x9e, 0x9e))
+    {}
+
+};
+
+struct label_metrics {
+    double width;
+    double ascent;
+    double descent;
+};
+
+static button_params params;
+
+template <class PF, class REN>
+label_metrics draw_text(PF& pixf,
+                        scanline_rasterizer& ras,
+                        REN& renderer,
+                        agg::scanline_u8& sl,
+                        double subpixel_scale,
+                        double initial_x,
+                        double initial_y,
+                        bool dry_run)
 {
-    scanline_rasterizer ras;
-    // pixfmt pixf(rbuf_window());
-    // base_renderer rb(pixf);
-    solid_renderer solid(rbase);
-    
-    // white fill
-    solid.color(agg::rgba8(0xFF, 0xFF, 0xFF));
-    // draft_renderer draft(rbase);
-    agg::scanline_u8 sl;
-    agg::rounded_rect button_shape(0.5, 0.5, 50 - 0.5, 20 - 0.5, 5);
-    ras.add_path(button_shape);
-    agg::render_scanlines(ras, sl, solid);
-
-    // black outline
-    agg::conv_stroke<agg::rounded_rect> outline(button_shape);
-    outline.width(0.2);
-    ras.add_path(outline);
-    solid.color(agg::rgba8(0, 0, 0));
-    agg::render_scanlines(ras, sl, solid);
-
     font_engine_type feng;
     font_manager_type fman(feng);
     font_curves_type curves(fman.path_adaptor());
-    font_contour_type contour(curves);
-    if (!feng.load_font("fonts/Ubuntu-C.ttf", 0, agg::glyph_ren_outline)) {
+    const char *font_name = params.label_font.c_str();
+    if (!feng.load_font(font_name, 0, agg::glyph_ren_outline)) {
+        perror(font_name);
         exit(1);
     }
     feng.hinting(false);
-    feng.height(15);
-    feng.width(15);
+    feng.height(params.label_font_size);
+    feng.width(subpixel_scale * params.label_font_size);
     feng.flip_y(true);
-    contour.width(0);
 
-    double x = 5;
-    double y = 20 - 4.5;
-    for (const char *p = "Cancel"; *p; p++) {
+    double x = subpixel_scale * initial_x;
+    double y = initial_y;
+    for (const char *p = params.label_text.c_str(); *p; p++) {
         const agg::glyph_cache *glyph = fman.glyph(*p);
         if (glyph) {
             fman.add_kerning(&x, &y);
-            fman.init_embedded_adaptors(glyph, x, y);
-            ras.reset();
-            ras.add_path(contour);
+            if (!dry_run) {
+                fman.init_embedded_adaptors(glyph, x, y);
+                ras.reset();
+                ras.add_path(curves);
+            }
             x += glyph->advance_x;
             y += glyph->advance_y;
         }
-        solid.color(agg::rgba8(0x9e, 0x9e, 0x9e));
-        agg::render_scanlines(ras, sl, solid);
+        if (!dry_run) {
+            renderer.color(params.label_color);
+            agg::render_scanlines(ras, sl, renderer);
+        }
     }
-    printf("xy = (%g, %g)\n", x, y);
-    printf("ascender = %g, descender = %g\n", feng.ascender(), feng.descender());
+
+    label_metrics m = {
+        (x - initial_x) / subpixel_scale,
+        feng.ascender(),
+        feng.descender(),
+    };
+    return m;
 }
 
-static void write_ppm_file(const agg::rendering_buffer& rbuf, FILE *out)
+static void render_button(rendering_buf& rbuf)
+{
+#ifdef SUBPIX
+    const int subpixel_scale = 3.0;
+#else
+    const int subpixel_scale = 1.0;
+#endif
+
+    // Getting AGG ready to draw is tedious.
+    pixfmt_type pixf(rbuf);
+
+    // Renderer Base: bounds clipping.
+    base_renderer rbase(pixf);
+    
+    // Rasterizer: converst polygons to spans
+    scanline_rasterizer ras;
+
+    // Scanline: stores a scanline
+    agg::scanline_u8 sl;
+
+    // solid renderer: renders solid colored regions
+    solid_renderer solid(rbase);
+
+#ifdef SUBPIX
+    agg::lcd_distribution_lut lut(3./9., 2./9., 1./9.);
+    pixfmt_lcd_type pixf_lcd(rbuf, lut);
+    base_renderer_lcd rbase_lcd(pixf_lcd);
+    solid_renderer_lcd solid_lcd(rbase_lcd);
+#endif
+    
+    // button shape
+    typedef agg::rounded_rect button_shape_type;
+    typedef agg::conv_stroke<button_shape_type> stroke_converter_type;
+
+    double w = params.width;
+    double h = params.height;
+    double r = params.radius;
+    button_shape_type button_shape(0.5, 0.5, w - 0.5, h - 0.5, r);
+
+    // background fill
+    ras.add_path(button_shape);
+    solid.color(params.bg_color);
+    agg::render_scanlines(ras, sl, solid);
+
+    // black outline
+    stroke_converter_type outline(button_shape);
+    outline.width(params.outline_width);
+    ras.add_path(outline);
+    solid.color(params.outline_color);
+    agg::render_scanlines(ras, sl, solid);
+
+#ifdef SUBPIX
+    label_metrics m = draw_text(pixf_lcd,
+                                ras,
+                                solid_lcd,
+                                sl,
+                                subpixel_scale,
+                                0, 0,
+                                true);
+#else
+    label_metrics m = draw_text(pixf,
+                                ras,
+                                solid,
+                                sl,
+                                subpixel_scale,
+                                0, 0,
+                                true);
+#endif
+
+    double x = (params.width - m.width) / 2;
+    double y = round((2 * params.height - m.ascent - m.descent) / 2);
+#ifdef SUBPIX
+    (void)draw_text(pixf_lcd, ras, solid_lcd, sl, subpixel_scale, x, y, false);
+#else
+    (void)draw_text(pixf, ras, solid, sl, subpixel_scale, x, y, false);
+#endif
+}
+
+static void write_ppm_file(const rendering_buf& rbuf, FILE *out)
 {
     unsigned width = rbuf.width();
     unsigned height = rbuf.height();
@@ -92,7 +220,7 @@ static void write_ppm_file(const agg::rendering_buffer& rbuf, FILE *out)
     fwrite(rbuf.buf(), 1, width * height * 3, out);
 }
 
-static void save_button(const agg::rendering_buffer& rbuf, const char *outfile)
+static void save_button(const rendering_buf& rbuf, const char *outfile)
 {
     FILE *f = fopen(outfile, "wb");
     if (!f)
@@ -101,10 +229,13 @@ static void save_button(const agg::rendering_buffer& rbuf, const char *outfile)
     fclose(f);
 }
 
+// Getting AGG ready to draw is tedious.
 static void make_button(void)
 {
     // Raw memory buffer
-    const size_t buffer_bytes = canvas_width * canvas_height * 3;
+    const size_t width = params.width;
+    const size_t height = params.height;
+    const size_t buffer_bytes = width * height * 3;
     agg::int8u buffer[buffer_bytes];
 
     // Erase to gray88
@@ -112,30 +243,55 @@ static void make_button(void)
 
     {
         // Rendering Buffer: rows and row stride.
-        agg::rendering_buffer rbuf(buffer,
-                                   canvas_width,
-                                   canvas_height,
-                                   canvas_width * 3);
+        rendering_buf rbuf(buffer, width, height, width * 3);
 
-        {
-            // Pixfmt Renderer: pixel format.
-            pixfmt_type pixf(rbuf);
-
-            {
-                // Renderer Base: bounds clipping.
-                agg::renderer_base<typeof pixf> rbase(pixf);
-
-                {
-                    render_button(rbase);
-                }
-            }
-        }
-
+        render_button(rbuf);
         save_button(rbuf, "output.ppm");
     }
 }
 
-int main()
+// use: make-button [opts] "label" up | down
+
+static void usage(FILE *out)
 {
+    fprintf(out, "use: make-button label in|out\n");
+    if (out == stderr)
+        exit(1);
+}
+
+static void parse_args(int argc, char *argv[])
+{
+    static const option longopts[] = {
+        // someday I'll get ambitious and make it possible to
+        // override most of the params.
+        { NULL, 0, NULL, 0 },
+    };
+    int ch;
+    while ((ch = getopt_long(argc, argv, "", longopts, NULL)) != -1) {
+        switch (ch) {
+        case 0:
+            printf("getopt returned zero\n");
+            break;
+        default:
+            printf("getopt returned %d\n", ch);
+            break;
+        }
+    }
+    if (optind != argc - 2)
+        usage(stderr);
+    const char *updown = argv[optind + 1];
+    if (!strcmp(updown, "up"))
+        params = button_params(up);
+    else if (!strcmp(updown, "down"))
+        params = button_params(dn);
+    else
+        usage(stderr);
+    params.label_text = argv[optind];
+}
+
+
+int main(int argc, char *argv[])
+{
+    parse_args(argc, argv);
     make_button();
 }

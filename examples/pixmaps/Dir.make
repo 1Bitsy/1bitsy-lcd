@@ -23,4 +23,5 @@ $($D_OFILES): CXX := $(HOSTCXX)
 $($D_OFILES): CPPFLAGS := -I$(AGG_DIR)/include -I$(AGG_DIR)/font_freetype
 $($D_OFILES): CPPFLAGS += -I/opt/local/include/freetype2
 $($D_OFILES): TARGET_ARCH :=
-$($D_OFILES): CXXFLAGS := -g 
+$($D_OFILES): CXXFLAGS := -MD -g 
+

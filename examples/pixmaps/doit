@@ -1,7 +1,15 @@
 #!/bin/sh -ex
 
+label=Toggle
+
 make examples/pixmaps/make-button
-./make-button
+./make-button "$label" down
 pnmtopng output.ppm > output.png
 open output.png
+open /Applications/Emacs.app
+sleep 1
+./make-button "$label" up
+pnmtopng output.ppm > output.png
+open output.png
+sleep 1
 open /Applications/Emacs.app
