@@ -3,12 +3,12 @@
 label="${1-Toggle}"
 stem="`echo \"$label\" | tr A-Z a-z`"
 
-make pixmaps/make-button
+make pixmaps/make-button-img
 
-./make-button -o "${stem}-up.ppm" "$label" up
+./make-button-img -o "${stem}-up.ppm" "$label" up
 pnmtopng "${stem}-up.ppm" > "${stem}-up.png"
 
-./make-button -o "${stem}-down.ppm" "$label" down
+./make-button-img -o "${stem}-down.ppm" "$label" down
 pnmtopng "${stem}-down.ppm" > "${stem}-down.png"
 open "${stem}"-{up,down}.png
 open /Applications/Emacs.app

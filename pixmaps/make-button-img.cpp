@@ -116,7 +116,9 @@ std::string find_font(const std::string& name)
             return path;
         }
     }
-    fprintf(stderr, "make-button: can't find font file %s.ttf\n", name.c_str());
+    fprintf(stderr,
+            "make-button-img: can't find font file %s.ttf\n",
+            name.c_str());
     exit(1);
 }
 
@@ -288,11 +290,11 @@ static void make_button(void)
     }
 }
 
-// use: make-button [opts] "label" up | down
+// use: make-button-img [opts] "label" up | down
 
 static void usage(FILE *out)
 {
-    fprintf(out, "use: make-button label in|out\n");
+    fprintf(out, "use: make-button-img label in|out\n");
     if (out == stderr)
         exit(1);
 }

@@ -20,5 +20,5 @@ $($D_ELF): $($D_OFILES) $(LIBGFX)
 
 $D/main.o: $D/toggle-button.h
 
-$D/toggle-button-%.ppm: $(MAKE_BUTTON)
-	$(MAKE_BUTTON) Toggle $* -o $@
+$D/toggle-button-%.ppm: $(MAKE_BUTTON_IMG)
+	$(MAKE_BUTTON_IMG) Toggle $* -o $@
