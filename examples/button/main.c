@@ -1,13 +1,13 @@
 #include <libopencm3/stm32/flash.h>
 #include <libopencm3/stm32/rcc.h>
 
-#include <string.h>
-
 #include <gfx.h>
 #include <lcd.h>
 #include <math-util.h>
 #include <systick.h>
 #include <touch.h>
+
+#include "toggle-button.h"
 
 // Control two traffic lights using two touchscreen buttons.
 
@@ -16,63 +16,28 @@
 #define BLACK_565  0x0000
 #define WHITE_565  0xFFFF
 #define GRAY50_565 0x7BEF
+#define GRAY88_565 0xE71C
 #define RED_565    0xF800
 #define GREEN_565  0x07E0
 #define BLUE_565   0x001F
 
-#define BG_COLOR   GRAY50_565
+#define BG_COLOR   GRAY88_565
 #define STOPLIGHT_COLOR 0x7BE0
 
 uint32_t fps;
 
-#define BW 60
-#define BH 40
-static gfx_pixtile b0_up, b0_dn;
-static gfx_pixtile b1_up, b1_dn;
-
-static gfx_rgb565 btn_up[BW * BH];
-static gfx_rgb565 btn_dn[BW * BH];
+static gfx_button buttons[2];
+static const size_t button_count = 2;
 
 static void init_buttons(void)
 {
-    for (size_t i = 0; i < BW * BH; i++) {
-        btn_up[i] = WHITE_565;
-        btn_dn[i] = BLACK_565;
-    };
-    gfx_init_pixtile(&b0_up, btn_up, 0, 0, BW, BH, BW);
-    gfx_init_pixtile(&b1_up, btn_up, 0, 0, BW, BH, BW);
-    gfx_init_pixtile(&b0_dn, btn_dn, 0, 0, BW, BH, BW);
-    gfx_init_pixtile(&b1_dn, btn_dn, 0, 0, BW, BH, BW);
+    gfx_init_toggle_button(&buttons[0], false, (gfx_ipoint){{  40, 250 }});
+    gfx_init_toggle_button(&buttons[1], false, (gfx_ipoint){{ 140, 250 }});
 }
 
-typedef struct button {
-    bool               is_down;
-    gfx_ipoint         position;
-    const gfx_pixtile *up_image;
-    const gfx_pixtile *down_image;
-} button;
-
-static button buttons[] = {
-    { false, { {  40, 250 } }, &b0_up, &b0_dn },
-    { false, { { 140, 250 } }, &b1_up, &b1_dn },
-};
-const size_t button_count = (&buttons)[1] - buttons;
-
-static bool is_touching;
-static button *touched_button;
-static bool was_down;
-
-static bool point_is_in_button(const gfx_ipoint *pt, const button *btn)
-{
-    int x = pt->x - btn->position.x;
-    int y = pt->y - btn->position.y;
-    const gfx_pixtile *img = btn->up_image;
-    if (x < img->x || x >= (int)(img->x + img->w))
-        return false;
-    if (y < img->y || y >= (int)(img->y + img->h))
-        return false;
-    return true;
-}
+static bool        is_touching;
+static gfx_button *touched_button;
+static bool        was_down;
 
 static void setup(void)
 {
@@ -100,8 +65,8 @@ static void animate(void)
         if (!was_touching) {
             // Finger down event.  Find out what we hit.
             for (size_t i = 0; i < button_count; i++) {
-                button *bp = &buttons[i];
-                if (point_is_in_button(&tp, bp)) {
+                gfx_button *bp = &buttons[i];
+                if (gfx_point_is_in_button(&tp, bp)) {
                     touched_button = bp;
                     was_down = bp->is_down;
                     bp->is_down = !was_down;
@@ -110,47 +75,17 @@ static void animate(void)
             }
         } else {
             // Is finger still on button?
-            button *btn = touched_button;
+            gfx_button *btn = touched_button;
             if (btn)
-                btn->is_down = was_down ^ point_is_in_button(&tp, btn);
+                btn->is_down = was_down ^ gfx_point_is_in_button(&tp, btn);
         }
     } else if (was_touching) {
+        // Finger up event.
         touched_button = NULL;
     }
 }
 
-// Copy source pixmap into destination.
-// offset translates src coordinates to dest.
-// dest coord = src coord + offset.
-static void copy_pixtile(gfx_pixtile       *dest,
-                         gfx_pixtile const *src,
-                         gfx_ipoint        *offset)
-{
-    int x0s = MAX(src->x, dest->x - offset->x);
-    int x1s = MIN(src->x + (int)src->w, dest->x + (int)dest->w - offset->x);
-    if (x0s >= x1s)
-        return;
-    int x0d = x0s + offset->x;
-    int nx = x1s - x0s;
-    int y0s = MAX(src->y, dest->y - offset->y);
-    int y1s = MIN(src->y + (int)src->h, dest->y + (int)dest->h - offset->y);
-    if (y0s >= y1s)
-        return;
-    int y0d = y0s + offset->y;
-    for (int ys = y0s, yd = y0d; ys < y1s; ys++, yd++) {
-        const gfx_rgb565 *ps =
-            gfx_pixel_address_unchecked((gfx_pixtile *)src, x0s, ys);
-        gfx_rgb565 *pd = gfx_pixel_address_unchecked(dest, x0d, yd);
-        memcpy(pd, ps, nx * sizeof *pd);
-    }
-}
-
-static void draw_button(gfx_pixtile *tile, button *btn)
-{
-    const gfx_pixtile *src = btn->is_down ? btn->down_image : btn->up_image;
-    copy_pixtile(tile, src, &btn->position);
-}
-
+// XXX this should be a gfx primitive.
 static void fill_circle(gfx_pixtile *tile,
                         gfx_point *const center,
                         float radius,
@@ -196,7 +131,7 @@ static void draw_stoplight(gfx_pixtile *tile, int x, int y, bool go)
 
     // fill rectangle
     for (int iy = y - 59; iy < y + 60; iy++)
-        gfx_fill_span(tile, x - 29, x + 29, iy, STOPLIGHT_COLOR);
+        gfx_fill_span(tile, x - 29, x + 30, iy, STOPLIGHT_COLOR);
 
     // red light
     gfx_point stop_center = {{ .x = x, .y = y - 30 }};
@@ -214,7 +149,7 @@ static void draw_tile(gfx_pixtile *tile)
     for (size_t i = 0; i < button_count; i++)
         draw_stoplight(tile, 70 + i * 100, 140, buttons[i].is_down);
     for (size_t i = 0; i < button_count; i++)
-        draw_button(tile, &buttons[i]);
+        gfx_draw_button(tile, &buttons[i]);
 }
 
 static void draw_frame(void)

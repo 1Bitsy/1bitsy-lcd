@@ -1,5 +1,6 @@
 *.d
 .gdbinit
+toggle-button.h
 
 # Object files
 *.o

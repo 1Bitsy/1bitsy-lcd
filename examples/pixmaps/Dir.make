@@ -2,6 +2,7 @@ D := examples/pixmaps
 
    # used in examples' makefiles
    MAKE_BUTTON := $D/make-button
+ IMG_TO_BUTTON := $D/img-to-button
 
           PROG := make-button
       CXXFILES := make-button.cpp
@@ -25,3 +26,5 @@ $($D_OFILES): CPPFLAGS += -I/opt/local/include/freetype2
 $($D_OFILES): TARGET_ARCH :=
 $($D_OFILES): CXXFLAGS := -MD -g 
 
+%-button.h: %-button-up.ppm %-button-down.ppm $(IMG_TO_BUTTON)
+	$(IMG_TO_BUTTON) $(*F) $(wordlist 1, 2, $^) -o $@

@@ -80,6 +80,7 @@ static const gpio_pin LCD_gpio_pins[] = {
         .gp_port  = LCD_RESX_PORT,
         .gp_pin   = LCD_RESX_PIN,
         .gp_mode  = GPIO_MODE_OUTPUT,
+        .gp_level = 1,
     },
     {                           // DCX (data/command)
         .gp_port  = LCD_DCX_PORT,

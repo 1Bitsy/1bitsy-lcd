@@ -38,6 +38,9 @@ clean:
 
 realclean: clean
 	$(MAKE) -C $(OPENCM3_DIR) clean
+	$(MAKE) -C $(AGG_DIR) clean
+	$(MAKE) -C $(AGG_DIR)/examples/macosx_sdl clean
+	find $(AGG_DIR) -name '*.o' -exec rm -f '{}' ';'
 
 opencm3:
 #       # XXX libopencm3 can't stop rebuilding the world.
@@ -45,8 +48,12 @@ opencm3:
 	  $(MAKE) -C $(OPENCM3_DIR) TARGETS=stm32/f4
 
 agg:
-	$(MAKE) -C $(AGG_DIR)
-	$(MAKE) -C $(AGG_DIR)/examples/macosx_sdl freetype 
+#	# XXX submake is too noisy.
+	@ $(MAKE) -s -C $(AGG_DIR) --no-print-directory
+	@ $(MAKE) -s                                                    \
+	          -C $(AGG_DIR)/examples/macosx_sdl                     \
+	          --no-print-directory                                  \
+	          freetype
 
 examples: $(EXAMPLE_ELVES)
 

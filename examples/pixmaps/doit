@@ -1,15 +1,19 @@
 #!/bin/sh -ex
 
-label=Toggle
+label="${1-Toggle}"
+stem="`echo \"$label\" | tr A-Z a-z`"
 
 make examples/pixmaps/make-button
-./make-button "$label" down
-pnmtopng output.ppm > output.png
-open output.png
+
+./make-button -o "${stem}-up.ppm" "$label" up
+pnmtopng "${stem}-up.ppm" > "${stem}-up.png"
+
+./make-button -o "${stem}-down.ppm" "$label" down
+pnmtopng "${stem}-down.ppm" > "${stem}-down.png"
+open "${stem}"-{up,down}.png
 open /Applications/Emacs.app
-sleep 1
-./make-button "$label" up
-pnmtopng output.ppm > output.png
-open output.png
-sleep 1
-open /Applications/Emacs.app
+
+./img-to-button "${label}"                      \
+                "${stem}-up.ppm"                \
+                "${stem}-down.ppm"              \
+                -o "${stem}-button.h"

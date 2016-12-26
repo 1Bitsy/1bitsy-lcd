@@ -1,5 +1,6 @@
 #define SUBPIX
 
+#include <fcntl.h>
 #include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,6 +18,20 @@
 #ifdef SUBPIX
     #include "agg_pixfmt_rgb24_lcd.h"
 #endif
+
+static const char *const font_directories[] = {
+    "fonts",
+    "examples/pixmaps/fonts",
+#ifdef __APPLE__
+    "~/Library/Fonts",
+    "/Library/Fonts",
+    "/Network/Library/Fonts",
+    "/System/Library/Fonts",
+#else
+    #error "add your platform's font path here"
+#endif
+    NULL
+};
 
 enum button_position {
     up, dn
@@ -67,7 +82,7 @@ struct button_params {
           outline_color(pos ? color_type(0x20, 0x20, 0x20)
                             : color_type(0xac, 0xac, 0xac)),
           outline_width(0.5),
-          label_font("fonts/Ubuntu-C.ttf"),
+          label_font("Ubuntu-C"),
           label_font_size(14),
           label_color(pos ? color_type(0xdf, 0xdf, 0xdf)
                           : color_type(0x9e, 0x9e, 0x9e))
@@ -82,6 +97,28 @@ struct label_metrics {
 };
 
 static button_params params;
+static const char *outfile = "button.ppm";
+
+std::string find_font(const std::string& name)
+{
+    for (const char *const *dir = font_directories; *dir; dir++) {
+        std::string path = *dir;
+        if (path.substr(0, 2) == "~/") {
+            const char *home = getenv ("HOME");
+            if (!home)
+                continue;       // -> next font directory
+            path = home + path.substr(1);
+        }
+        path += std::string("/") + name + ".ttf";
+        int fd = open(path.c_str(), O_RDONLY);
+        if (fd != -1) {
+            close(fd);
+            return path;
+        }
+    }
+    fprintf(stderr, "make-button: can't find font file %s.ttf\n", name.c_str());
+    exit(1);
+}
 
 template <class PF, class REN>
 label_metrics draw_text(PF& pixf,
@@ -96,9 +133,10 @@ label_metrics draw_text(PF& pixf,
     font_engine_type feng;
     font_manager_type fman(feng);
     font_curves_type curves(fman.path_adaptor());
-    const char *font_name = params.label_font.c_str();
-    if (!feng.load_font(font_name, 0, agg::glyph_ren_outline)) {
-        perror(font_name);
+    // const char *font_name = params.label_font.c_str();
+    std::string font_path = find_font(params.label_font);
+    if (0 || !feng.load_font(font_path.c_str(), 0, agg::glyph_ren_outline)) {
+        perror(font_path.c_str());
         exit(1);
     }
     feng.hinting(false);
@@ -246,7 +284,7 @@ static void make_button(void)
         rendering_buf rbuf(buffer, width, height, width * 3);
 
         render_button(rbuf);
-        save_button(rbuf, "output.ppm");
+        save_button(rbuf, outfile);
     }
 }
 
@@ -264,17 +302,20 @@ static void parse_args(int argc, char *argv[])
     static const option longopts[] = {
         // someday I'll get ambitious and make it possible to
         // override most of the params.
-        { NULL, 0, NULL, 0 },
+        { "output", required_argument, NULL, 'o' },
+        { NULL,     0,                 NULL, 0   },
     };
     int ch;
-    while ((ch = getopt_long(argc, argv, "", longopts, NULL)) != -1) {
+    while ((ch = getopt_long(argc, argv, "o:", longopts, NULL)) != -1) {
         switch (ch) {
-        case 0:
-            printf("getopt returned zero\n");
+
+        case 'o':
+            outfile = optarg;
             break;
+
         default:
-            printf("getopt returned %d\n", ch);
-            break;
+            fprintf(stderr, "getopt returned %d\n", ch);
+            exit(1);
         }
     }
     if (optind != argc - 2)
