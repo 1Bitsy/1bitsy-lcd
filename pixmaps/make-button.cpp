@@ -21,7 +21,7 @@
 
 static const char *const font_directories[] = {
     "fonts",
-    "examples/pixmaps/fonts",
+    "pixmaps/fonts",
 #ifdef __APPLE__
     "~/Library/Fonts",
     "/Library/Fonts",

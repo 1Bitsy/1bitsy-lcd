@@ -3,7 +3,7 @@
 label="${1-Toggle}"
 stem="`echo \"$label\" | tr A-Z a-z`"
 
-make examples/pixmaps/make-button
+make pixmaps/make-button
 
 ./make-button -o "${stem}-up.ppm" "$label" up
 pnmtopng "${stem}-up.ppm" > "${stem}-up.png"

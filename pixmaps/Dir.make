@@ -1,4 +1,4 @@
-D := examples/pixmaps
+             D := pixmaps
 
    # used in examples' makefiles
    MAKE_BUTTON := $D/make-button

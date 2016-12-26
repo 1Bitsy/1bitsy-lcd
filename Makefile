@@ -31,6 +31,7 @@
 all: opencm3 agg lib examples
 
 include src/Dir.make
+include pixmaps/Dir.make
 include examples/Dir.make
 
 clean:

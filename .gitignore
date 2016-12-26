@@ -1,5 +1,6 @@
 *.d
 .gdbinit
+pixmaps/make-button
 toggle-button.h
 
 # Object files
@@ -31,7 +32,6 @@ toggle-button.h
 *.i*86
 *.x86_64
 *.hex
-examples/pixmaps/make-button
 
 # Debug files
 *.dSYM/
