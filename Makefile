@@ -4,9 +4,8 @@
        HOSTCXX := c++
         HOSTLD := c++
 
-    SUBMODULES := libopencm3 agg
+    SUBMODULES := libopencm3
    OPENCM3_DIR := submodules/libopencm3
-       AGG_DIR := submodules/agg
 
       CPPFLAGS := -DSTM32F4
       CPPFLAGS += -Isrc -Iinclude -I$(OPENCM3_DIR)/include
@@ -28,10 +27,10 @@
  EXAMPLE_ELVES :=
 
 
-all: opencm3 agg lib examples
+all: opencm3 lib examples
 
 include src/Dir.make
-include pixmaps/Dir.make
+#include pixmaps/Dir.make
 include examples/Dir.make
 
 clean:
@@ -39,31 +38,16 @@ clean:
 
 realclean: clean
 	$(MAKE) -C $(OPENCM3_DIR) clean
-	$(MAKE) -C $(AGG_DIR) clean
-	$(MAKE) -C $(AGG_DIR)/examples/macosx_sdl clean
-	find $(AGG_DIR) -name '*.o' -exec rm -f '{}' ';'
 
 opencm3:
 #       # XXX libopencm3 can't stop rebuilding the world.
 	@ [ -f $(OPENCM3_DIR)/lib/libopencm3_stm32f4.a ] || \
 	  $(MAKE) -C $(OPENCM3_DIR) TARGETS=stm32/f4
 
-agg:
-#	# XXX submake is too noisy.
-	@ $(MAKE) -s -C $(AGG_DIR) --no-print-directory
-	@ $(MAKE) -s                                                    \
-	          -C $(AGG_DIR)/examples/macosx_sdl                     \
-	          --no-print-directory                                  \
-	          freetype
-
 examples: $(EXAMPLE_ELVES)
 
 ifeq ($(wildcard $(OPENCM3_DIR)/*),)
     missing_submodule := libopencm3
-endif
-
-ifeq ($(wildcard $(AGG_DIR)/*),)
-    missing_submodule := agg
 endif
 
 ifdef missing_submodule

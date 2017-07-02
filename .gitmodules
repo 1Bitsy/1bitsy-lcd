@@ -1,7 +1,3 @@
 [submodule "submodules/libopencm3"]
 	path = submodules/libopencm3
 	url = https://github.com/libopencm3/libopencm3
-[submodule "submodules/agg"]
-	path = submodules/agg
-	url = https://github.com/tomhughes/agg
-	branch = 2.4
