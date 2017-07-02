@@ -7,7 +7,7 @@
 #include <systick.h>
 #include <touch.h>
 
-#include "toggle-button.h"
+#include "toggle-button-data.h"
 
 // Control two traffic lights using two touchscreen buttons.
 

@@ -18,7 +18,7 @@ $($D_ELF): LDLIBS := $($D_LDLIBS)
 $($D_ELF): $($D_OFILES) $(LIBGFX)
 	$(LINK.o) $^ $(LOADLIBES) $(LDLIBS) $(POST_LDFLAGS) -o $@
 
-$D/main.o: $D/toggle-button.h
+$D/main.o: $D/toggle-button-data.h
 
 $D/toggle-button-%.ppm: $(MAKE_BUTTON_IMG)
 	$(MAKE_BUTTON_IMG) Toggle $* -o $@

@@ -27,5 +27,21 @@ $($D_OFILES):          CPPFLAGS += -I/opt/local/include/freetype2
 $($D_OFILES):       TARGET_ARCH :=
 $($D_OFILES):          CXXFLAGS := -MD -g 
 
-%-button.h: %-button-up.ppm %-button-down.ppm $(IMG_TO_BUTTON)
+%-button-data.h: %-button-up.ppm %-button-down.ppm $(IMG_TO_BUTTON)
 	$(IMG_TO_BUTTON) $(*F) $(wordlist 1, 2, $^) -o $@
+
+# Define a button pixmap.
+# Use: $(eval $(call define-button,Label,identifier,dependent))
+# e.g., $(eval $(call define-button,Save File,save,main.o))
+# Usesa free variable D.
+
+define define-button
+
+    $$D/$(3): $$D/$(2)-button-data.h
+
+    $$D/${2}-button-%.ppm: $(MAKE_BUTTON_IMG)
+	$(MAKE_BUTTON_IMG) "$(1)" $$* -o $$@
+
+    DIRT += $$D/$(2)-button-data.h
+
+endef

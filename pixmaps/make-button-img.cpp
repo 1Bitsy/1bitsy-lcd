@@ -294,7 +294,7 @@ static void make_button(void)
 
 static void usage(FILE *out)
 {
-    fprintf(out, "use: make-button-img label in|out\n");
+    fprintf(out, "use: make-button-img label up|down\n");
     if (out == stderr)
         exit(1);
 }

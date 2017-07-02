@@ -1,7 +1,7 @@
 *.d
 .gdbinit
 pixmaps/make-button-img
-toggle-button.h
+*-button-data.h
 
 # Object files
 *.o

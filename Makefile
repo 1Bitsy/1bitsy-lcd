@@ -35,7 +35,7 @@ include pixmaps/Dir.make
 include examples/Dir.make
 
 clean:
-	rm -rf $(DIRT) $(DFILES)
+	$(RM) -r $(DIRT) $(DFILES)
 
 realclean: clean
 	$(MAKE) -C $(OPENCM3_DIR) clean

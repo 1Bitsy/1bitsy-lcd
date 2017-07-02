@@ -1,3 +1,5 @@
+#include <assert.h>
+
 #include <libopencm3/stm32/flash.h>
 #include <libopencm3/stm32/rcc.h>
 
@@ -7,6 +9,10 @@
 #include <systick.h>
 #include <touch.h>
 
+#include "smooth-button-data.h"
+#include "fade-button-data.h"
+#include "color-button-data.h"
+
 // Draw various lines and display using big pixels.
 
 #define MY_CLOCK (rcc_hse_25mhz_3v3[RCC_CLOCK_3V3_168MHZ])
@@ -14,12 +20,13 @@
 #define BLACK_565  0x0000
 #define WHITE_565  0xFFFF
 #define GRAY50_565 0x7BEF
+#define GRAY88_565 0xE71C
 #define RED_565    0xF800
 #define GREEN_565  0x07E0
 #define BLUE_565   0x001F
 
 #define FG_COLOR   WHITE_565
-#define BG_COLOR   GRAY50_565
+#define BG_COLOR   GRAY88_565
 #define PIX_COLOR  BLACK_565
 #define LINE_COLOR GREEN_565
 #define P0_COLOR   RED_565
@@ -36,15 +43,30 @@
 #define TOUCH_PROXIMITY 20      // pixel distance to match
 #define CROSSHAIR_RADIUS 64
 
+typedef enum drawing_mode {
+    DRAWING_MODE_BASIC    = 0,
+    DRAWING_MODE_AA       = 1 << 0,
+    DRAWING_MODE_BLEND    = 1 << 1,
+    DRAWING_MODE_AA_BLEND = DRAWING_MODE_AA | DRAWING_MODE_BLEND,
+} drawing_mode;
+
 static gfx_pixtile my_tile;
 static gfx_rgb565 my_pixels[HEIGHT * WIDTH];
 
-uint32_t fps;
-static gfx_point line_p0;
-static gfx_point line_p1;
-static bool is_touching;
-static int endpt;
-static gfx_point tp_offset;
+static gfx_button buttons[3];
+static const size_t button_count = 3;
+
+uint32_t            fps;
+static gfx_point    line_p0;
+static gfx_point    line_p1;
+static uint8_t      line_alpha;
+static drawing_mode line_mode;
+static gfx_rgb565   line_color = PIX_COLOR;
+static bool         is_touching_screen;
+static gfx_button  *touched_button;
+static bool         button_was_down;
+static int          touched_endpoint;
+static gfx_point    tp_offset;
 
 static inline gfx_point zoom_in(gfx_point p)
 {
@@ -71,10 +93,61 @@ static void render_tile(void)
 
     gfx_point p0 = zoom_out(line_p0);
     gfx_point p1 = zoom_out(line_p1);
-    gfx_draw_line(&my_tile,
-                  p0.x, p0.y,
-                  p1.x, p1.y,
-                  PIX_COLOR);
+    switch (line_mode) {
+
+        case DRAWING_MODE_BASIC:
+            gfx_draw_line(&my_tile,
+                          p0.x,
+                          p0.y,
+                          p1.x,
+                          p1.y,
+                          line_color);
+            break;
+
+        case DRAWING_MODE_AA:
+            gfx_draw_line_aa(&my_tile,
+                             p0.x,
+                             p0.y,
+                             p1.x,
+                             p1.y,
+                             line_color);
+            break;
+
+        case DRAWING_MODE_BLEND:
+            // gfx_draw_line_blend(&my_tile,
+            //                     p0.x,
+            //                     p0.y,
+            //                     p1.x,
+            //                     p1.y,
+            //                     line_color,
+            //                     line_alpha);
+            break;
+
+        case DRAWING_MODE_AA_BLEND:
+            // gfx_draw_line_aa_blend(&my_tile,
+            //                        p0.x,
+            //                        p0.y,
+            //                        p1.x,
+            //                        p1.y,
+            //                        line_color,
+            //                        line_alpha);
+            break;
+
+        default:
+            assert(false);
+    }
+
+    // gfx_draw_line(&my_tile,
+    //               p0.x, p0.y,
+    //               p1.x, p1.y,
+    //               line_color);
+}
+
+static void init_buttons(void)
+{
+    gfx_init_smooth_button(&buttons[0], false, (gfx_ipoint){{  15, 275 }});
+    gfx_init_fade_button  (&buttons[1], false, (gfx_ipoint){{  95, 275 }});
+    gfx_init_color_button (&buttons[2], false, (gfx_ipoint){{ 175, 275 }});
 }
 
 static void setup(void)
@@ -90,63 +163,142 @@ static void setup(void)
     lcd_init();
     touch_init();
 
+    init_buttons();
+
     gfx_init_pixtile(&my_tile, my_pixels, 0, 0, WIDTH, HEIGHT, WIDTH);
 
     line_p0 = zoom_in((gfx_point){ .x = +1,        .y = +1         });
     line_p1 = zoom_in((gfx_point){ .x = WIDTH - 2, .y = HEIGHT - 2 });
-    render_tile();
-
 }
 
-static void animate(void)
+static void on_finger_down(gfx_ipoint itp)
 {
-    bool was_touching = is_touching;
-    is_touching = touch_count() != 0;
-    if (!is_touching)
-        return;
+    // if in button, track that button.
 
-    gfx_ipoint itp = touch_point(0);
-    gfx_point tp = (gfx_point) { .x = itp.x, .y = itp.y };
-
-    if (!was_touching) {
-        // on finger down, decide which endpoint to drag and
-        // calculate an offset.
-        float dd0 = distance2(&tp, &line_p0);
-        float dd1 = distance2(&tp, &line_p1);
-        float prox2 = TOUCH_PROXIMITY * TOUCH_PROXIMITY;
-
-        if (dd0 > prox2 && dd1 > prox2) {
-            endpt = -1;
+    touched_button = NULL;
+    for (size_t i = 0; i < button_count; i++) {
+        gfx_button *bp = &buttons[i];
+        if (gfx_point_is_in_button(&itp, bp)) {
+            touched_button = &buttons[i];
+            button_was_down = bp->is_down;
+            bp->is_down = !button_was_down;
             return;
         }
+    }
+
+    // else, if near an endpoint, track that endpoint.
+
+    gfx_point tp = (gfx_point) { .x = itp.x, .y = itp.y };
+    float dd0 = distance2(&tp, &line_p0);
+    float dd1 = distance2(&tp, &line_p1);
+    float prox2 = TOUCH_PROXIMITY * TOUCH_PROXIMITY;
+
+    if (dd0 > prox2 && dd1 > prox2) {
+        touched_endpoint = -1;
+    } else {
         if (dd0 < dd1) {
-            endpt = 0;
+            touched_endpoint = 0;
             tp_offset = (gfx_point) {
                 .x = line_p0.x - tp.x,
                 .y = line_p0.y - tp.y
             };
         } else {
-            endpt = 1;
+            touched_endpoint = 1;
             tp_offset = (gfx_point) {
                 .x = line_p1.x - tp.x,
                 .y = line_p1.y - tp.y
             };
         }
-    } else {
-        // on drag, move the active endpoint.
-        if (endpt == 0) {
+    }
+}
+
+static void on_finger_drag(gfx_ipoint itp)
+{
+    // tracking a button?
+
+    gfx_button *btn = touched_button;
+    if (btn) {
+        btn->is_down = button_was_down ^ gfx_point_is_in_button(&itp, btn);
+        return;
+    }
+
+    // tracking an endpoint?
+
+    if (touched_endpoint != -1) {
+        gfx_point tp = (gfx_point) { .x = itp.x, .y = itp.y };
+        if (touched_endpoint == 0) {
             line_p0 = (gfx_point) { {
                 .x = CLAMP(0, LCD_WIDTH - 1, tp.x + tp_offset.x),
                 .y = CLAMP(0, LCD_HEIGHT - 1, tp.y + tp_offset.y),
             } };
-        } else if (endpt == 1) {
+        } else if (touched_endpoint == 1) {
             line_p1 = (gfx_point) { {
                 .x = CLAMP(0, LCD_WIDTH, tp.x + tp_offset.x),
                 .y = CLAMP(0, LCD_HEIGHT, tp.y + tp_offset.y),
             } };
         }
     }
-    
+}
+
+static void on_finger_up(void)
+{
+    if (touched_button)
+        touched_button = NULL;
+    else if (touched_endpoint != -1)
+        touched_endpoint = -1;
+}
+
+static void switch_colors(void)
+{
+    line_color = RED_565;
+    // keep fg and bg at opposite hues.
+    // increment hues by 60 degrees.
+    // keep S maximized.
+    // fg V starts at 0, switches to 1.
+    // bg V starts at 1, stays at 1.
+}
+
+static void animate(void)
+{
+    bool was_touching = is_touching_screen;
+    is_touching_screen = touch_count() != 0;
+    if (is_touching_screen) {
+        gfx_ipoint itp = touch_point(0);
+        if (!was_touching)
+            on_finger_down(itp);
+        else
+            on_finger_drag(itp);
+    } else {
+        if (was_touching) {
+            on_finger_up();
+        }
+    }        
+
+    line_mode = DRAWING_MODE_BASIC;
+    if (buttons[0].is_down)
+        line_mode |= DRAWING_MODE_AA;
+    if (buttons[1].is_down)
+        line_mode |= DRAWING_MODE_BLEND;
+    if (buttons[2].is_down && !touched_button) {
+        switch_colors();
+        buttons[2].is_down = false;
+    }
+
+    // Update alpha.
+    {
+        static float opacity = 0.0;
+        static float opacity_velocity = 0.020;
+        opacity += opacity_velocity;
+        if (opacity > 1.0) {
+            opacity = 2.0 - opacity;
+            opacity_velocity = -ABS(opacity_velocity);
+        } else if (opacity < 0.0) {
+            opacity = -opacity;
+            opacity_velocity = ABS(opacity_velocity);
+        }
+        line_alpha = (int)(0xFF * opacity);
+    }
+
     render_tile();
 }
 
@@ -192,6 +344,7 @@ static void draw_tile(gfx_pixtile *tile)
     int iy0 = MAX(0, (tile->y - TOP) / ZOOM);
     int iy1 = MIN(HEIGHT, (ssize_t)(tile->y + tile->h - TOP + ZOOM - 1) / ZOOM);
 
+    // Draw magnified pixmap.
     for (int iy = iy0; iy < iy1; iy++) {
         int y = TOP + iy * ZOOM;
         for (int ix = 0; ix < WIDTH; ix++) {
@@ -201,15 +354,20 @@ static void draw_tile(gfx_pixtile *tile)
         }
     }
 
+    // Draw line controls.
     gfx_draw_line(tile, line_p0.x, line_p0.y, line_p1.x, line_p1.y, LINE_COLOR);
     fill_diamond(tile, line_p0, ZOOM/2, P0_COLOR);
     fill_diamond(tile, line_p1, ZOOM/2, P1_COLOR);
-    if (is_touching) {
-        if (endpt == 0)
+    if (touched_endpoint != -1) {
+        if (touched_endpoint == 0)
             draw_crosshairs(tile, line_p0, P0_COLOR);
-        else if (endpt == 1)
+        else if (touched_endpoint == 1)
             draw_crosshairs(tile, line_p1, P1_COLOR);
     }
+
+    // Draw buttons.
+    for (size_t i = 0; i < button_count; i++)
+        gfx_draw_button(tile, &buttons[i]);
 }
 
 static void draw_frame(void)
@@ -222,7 +380,6 @@ static void draw_frame(void)
         draw_tile(tile);
         lcd_send_pixtile(tile);
     }
-
 }
 
 void calc_fps(void);

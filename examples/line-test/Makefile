@@ -1,4 +1,4 @@
 .DEFAULT_GOAL := all
 
 %:
-	$(MAKE) -C ../.. "$@" --print-directory
+	@$(MAKE) -C ../.. "$@" --print-directory
